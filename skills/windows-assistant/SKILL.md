@@ -1,6 +1,6 @@
 ---
 name: windows-assistant
-description: Act as the user's Windows PC assistant - move/copy/rename/find files, open apps and folders, play music (Spotify or local files), control media keys and volume. Use for everyday "do this on my PC" requests, in Turkish or English.
+description: Act as the user's Windows PC assistant - move/copy/rename/find files, open apps and folders, play music (Spotify or local files), control media keys and volume. Use for everyday "do this on my PC" requests, in any language.
 metadata:
   {
     "openclaw": { "emoji": "🖥️", "os": ["win32"] }
@@ -9,7 +9,7 @@ metadata:
 
 # Windows PC assistant
 
-The user is {{USER_NAME}} (Turkish; answer in Turkish unless asked otherwise). Run PowerShell through `exec`.
+The user is {{USER_NAME}} (answer in {{LANGUAGE}} unless asked otherwise). Run PowerShell through `exec`.
 Paths: home `{{USERPROFILE}}`, Desktop `{{USERPROFILE}}\Desktop`, Downloads `{{USERPROFILE}}\Downloads`,
 Documents `{{USERPROFILE}}\Documents`, Music `{{USERPROFILE}}\Music`, repos `{{PROJECTS_DIR}}`.
 

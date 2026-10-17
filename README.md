@@ -15,7 +15,7 @@
 
 </div>
 
-> **🇹🇷 Türkçe özet:** MERGEN, tek bir bilgisayarda tamamen yerel çalışan, Türkçe konuşan bir yapay zekâ asistanı ve
+> **🇹🇷 Türkçe özet:** MERGEN, tek bir bilgisayarda tamamen yerel çalışan, Türkçe (ya da kurulumda seçtiğiniz dilde) konuşan bir yapay zekâ asistanı ve
 > yazılım geliştirme hattıdır. Qwen3.8-Flash-Next modeli [Strata](https://github.com/Niko1221/Strata) ile RTX 5090 +
 > sistem RAM'i üzerinde 256K bağlamla çalışır; [OpenClaw](https://docs.openclaw.ai) ajanı yürütür. Sesli komut
 > ("Mergen, ..."), Telegram, web araması (yerel SearXNG), dosya ve uygulama yönetimi, araştırma ve YouTube analizi
@@ -34,7 +34,8 @@
 
 ## What it is
 
-- **An assistant that lives on your PC.** MERGEN speaks Turkish, has opinions and pushes back. It runs files, apps,
+- **An assistant that lives on your PC.** MERGEN speaks Turkish - or the language you pick at setup - has opinions
+  and pushes back. It runs files, apps,
   music, web research and YouTube analysis - and asks before anything it cannot undo. Reach it from the browser, by
   voice ("Mergen, ...") or from your phone over Telegram.
 - **A software pipeline that is honest about itself.** Ask for a program and a deterministic orchestrator runs it:
@@ -164,14 +165,16 @@ PowerShell, in order. Every script has its settings at the top.
 ```powershell
 # 0. once: a fixed 64 GB page file on C:, then reboot (docs/known-issues.md)
 
-# 1. Strata + a Qwen3.8-Flash-Next build: pick it with the arrow keys + Enter (the one for your RAM is preselected)
+# 1. Strata + a Qwen3.8-Flash-Next build: pick it with the arrow keys + Enter (the one for your RAM is preselected);
+#    it then shows the download size and free disk space and asks before downloading
 .\scripts\01-install-strata.ps1                  # or no menu: -Model IQ3_S / UD-IQ4_XS / IQ2_XS / CODER ...
 
 # 2. OpenClaw (pinned) + the gateway service
 .\scripts\02-install-openclaw.ps1
 
-# 3. point OpenClaw at Strata; web search, memory, skills, MERGEN's identity files
-.\scripts\03-configure-openclaw.ps1
+# 3. point OpenClaw at Strata; web search, memory, skills, MERGEN's identity files.
+#    Menus: MERGEN's language, then the voice language (Turkish or English)
+.\scripts\03-configure-openclaw.ps1             # or no menus: -Language German -Voice en
 ```
 
 Step 3 ends with one interactive step OpenClaw has no flag for (the local embedding server); the script prints exactly
@@ -208,9 +211,15 @@ planning and reviews on your own GPU.
 ## Voice
 
 Say **"Mergen, <command>"** in one sentence, or hold **F9**. A small Whisper model listens for the name, `large-v3-turbo`
-confirms it and transcribes; the answer is spoken with Piper's Turkish voice. Everything runs on the CPU, no audio
+confirms it and transcribes; the answer is spoken with a Piper voice, in Turkish or English. Everything runs on the CPU, no audio
 leaves the PC, and speech not addressed to MERGEN is never logged. Setup and tuning: [voice/](voice/).
-The `tr_TR-dfki` voice is **CC BY-NC-SA 4.0** - fine for personal use, not for monetized content.
+The `tr_TR-dfki` voice is **CC BY-NC-SA 4.0** - fine for personal use, not for monetized content; the English
+`en_US-ljspeech` voice is trained on public-domain data.
+
+**Languages:** MERGEN writes in the language chosen at setup - the menu lists 22 common ones, *Other* takes any
+name, and the model's quality varies by language (Qwen does not publish a list for Qwen3.8-Flash-Next). Voice is
+Turkish or English, the two with a tested speech setup; with another language, pick one of them or no voice.
+Pipeline notifications on Telegram are in Turkish or English.
 
 ## Skills
 
@@ -234,6 +243,17 @@ The `tr_TR-dfki` voice is **CC BY-NC-SA 4.0** - fine for personal use, not for m
 
 These came from real incidents - see [known issues](docs/known-issues.md) for the day a test moved an entire
 Documents folder.
+
+## Recommended extra skills
+
+Not bundled here, only pointers. Each uses the same `SKILL.md` format OpenClaw reads; copy the ones you want into
+`~/.agents/skills` and read them first (third-party skills are untrusted until reviewed).
+
+| Source | License | Skills used with MERGEN |
+|---|---|---|
+| [addyosmani/agent-skills](https://github.com/addyosmani/agent-skills) | MIT | code-review-and-quality, debugging-and-error-recovery, security-and-hardening |
+| [anthropics/skills](https://github.com/anthropics/skills) | per skill (these: Apache 2.0) | frontend-design, mcp-builder |
+| [coreyhaines31/marketingskills](https://github.com/coreyhaines31/marketingskills) | MIT | content-strategy, copywriting, launch, pricing, social |
 
 ## Repository
 

@@ -19,8 +19,9 @@ Work through the steps in order. Tell the user what you are doing in plain words
   user is fine with that, especially on a metered connection.
 - **Long-running steps.** Strata's setup can take an hour or more. Run it in the background or with a long timeout and
   poll its output; do not kill it because it is quiet. Rerunning the same command resumes it.
-- **The scripts menus are for humans.** `01-install-strata.ps1` shows an arrow-key menu when it has a console; from an
-  agent's shell always pass `-Model` so nothing waits for a key press.
+- **The scripts' menus are for humans.** `01-install-strata.ps1` and `03-configure-openclaw.ps1` show arrow-key menus
+  and a download prompt when they have a console; from an agent's shell always pass `-Model`, `-Language` and
+  `-Voice` so nothing waits for a key press (with `-Model` there is no download prompt: confirm the size yourself).
 
 ## 1. Check the PC
 
@@ -85,7 +86,9 @@ table in the [README](../README.md#quick-start). `SWIFT-*` builds think shorter;
 ```
 
 `03-configure-openclaw.ps1` sets `$UserName` to the Windows user name; MERGEN calls the user by it. Ask the user for
-their first name and change that line before running it.
+their first name and change that line before running it. Ask which language MERGEN should speak and pass it, with
+the voice language: `-Language German -Voice en` (`-Voice tr | en | none`; voice exists only in Turkish and English).
+Without them the script opens menus that wait for a key press.
 
 **One step you cannot do:** the local embedding server is chosen in an interactive OpenClaw menu with no flag. The
 script prints the exact answers; ask the user to run `openclaw configure --section model` and follow them, then run

@@ -14,14 +14,14 @@ MEMORY.md in the main session). Reread files only when asked, when something is 
 - `USER.md` - {{USER_NAME}}'s stable preferences as directives (`<!-- observed: YYYY-MM-DD | status: active -->` + one
   `Always/Never/Prefer` line). On change: mark the old one `superseded`, never keep contradicting active directives.
 - `MEMORY.md` - durable facts and decisions; main session only, never in shared chats.
-- "Bunu hatırla" -> write it down now. A mistake or lesson -> add it here or to the relevant skill so it is not
+- "Remember this" ("Bunu hatırla") -> write it down now. A mistake or lesson -> add it here or to the relevant skill so it is not
   repeated. Never store secrets in memory files.
 
 ## Red lines (no exceptions)
 
 1. **Delete:** always ask first, show the exact full paths, wait for "evet". Even then send to the Recycle Bin; never
    `Remove-Item`/`rm` on {{USER_NAME}}'s files.
-2. **Move / rename:** ask first (show `kaynak -> hedef` with full paths and the count) - unless {{USER_NAME}}'s message names
+2. **Move / rename:** ask first (show `source -> destination` with full paths and the count) - unless {{USER_NAME}}'s message names
    both the exact item and the exact destination. Vague requests ("topla", wildcards, several folders) always need
    a confirmation. Never move or rename top-level user folders (Documents, Desktop, Downloads, GitHub...).
    _Why: on 2026-10-15 a test moved the whole Documents folder into this workspace (an empty PowerShell variable
@@ -39,7 +39,7 @@ MEMORY.md in the main session). Reread files only when asked, when something is 
    settings, and anything you are unsure about.
 9. **Never switch GPU modes yourself:** `creative` and `free` stop Strata - the model you run on.
 10. **Software projects go through the pipeline, not through you.** When {{USER_NAME}} asks for a program, app, game,
-    website, tool, bot or any multi-file code ("... yap", "... geliştir", "... yaz", "kod pipeline'ını test et"):
+    website, tool, bot or any multi-file code ("build me ...", "... yap", "... geliştir", or the same in any language):
     do NOT write it yourself. Use the **project-brief** skill (ask, write `PROJECT_BRIEF.md` in
     `{{PROJECTS_DIR}}\<slug>`), then the **hybrid-dev** skill (plan with `--plan-only`, show the tasks,
     wait for "onay", then start the detached build). Projects live in `Documents\GitHub`, never in this workspace.

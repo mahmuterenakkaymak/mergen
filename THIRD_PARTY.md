@@ -15,6 +15,7 @@ sources, under their own licenses.
 | [faster-whisper](https://github.com/SYSTRAN/faster-whisper) + Whisper weights | speech to text | MIT | |
 | [Piper](https://github.com/rhasspy/piper) | text to speech | see the repo | |
 | Piper voice `tr_TR-dfki-medium` | Turkish voice | **CC BY-NC-SA 4.0** | non-commercial |
+| Piper voice `en_US-ljspeech-medium` | English voice | LJ Speech dataset: public domain | see its MODEL_CARD |
 | [SearXNG](https://github.com/searxng/searxng) | web search (Docker) | AGPL-3.0 | runs unmodified as a separate container |
 | [Claude Code](https://claude.com/claude-code) | hybrid pipeline CLI | Anthropic's terms | needs your own account for the cloud brain |
 | Unsloth Studio | creative mode serving | see Unsloth | |

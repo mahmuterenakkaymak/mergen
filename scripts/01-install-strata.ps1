@@ -1,7 +1,7 @@
 ﻿# Installs Strata and a Qwen3.8-Flash-Next build of your choice, configured for this stack.
 # Safe to re-run: Strata's setup resumes downloads and keeps existing model files.
 #
-#   .\scripts\01-install-strata.ps1                 # menu with a recommendation for your RAM
+#   .\scripts\01-install-strata.ps1                 # arrow-key menu (pick for your RAM preselected) + download prompt
 #   .\scripts\01-install-strata.ps1 -Model IQ3_S    # no questions
 #   .\scripts\01-install-strata.ps1 -Model UD-IQ4_XS -SkipSetup   # register a build that is already installed
 #
@@ -24,8 +24,8 @@ $Catalog = @(
     [pscustomobject]@{ Model = "IQ2_XS";        Family = "qwen";    MinRamGB = 40; Note = "fast, better quality (Strata's pick for 48-64 GB)" }
     [pscustomobject]@{ Model = "IQ3_XXS";       Family = "qwen";    MinRamGB = 47; Note = "slower, great quality" }
     [pscustomobject]@{ Model = "IQ3_S";         Family = "qwen";    MinRamGB = 55; Note = "slowest 3-bit, matches the full model on published tests" }
-    [pscustomobject]@{ Model = "UD-IQ4_XS";     Family = "unsloth"; MinRamGB = 80; Note = "~4-bit, 94 GB download (this repo's tested setup)" }
-    [pscustomobject]@{ Model = "UD-Q4_K_XL";    Family = "unsloth"; MinRamGB = 64; Note = "EXPERIMENTAL: 111 GB, NVIDIA + NVMe only, experts streamed from SSD" }
+    [pscustomobject]@{ Model = "UD-IQ4_XS";     Family = "unsloth"; MinRamGB = 80; DownloadGB = 94;  Note = "~4-bit, 94 GB download (this repo's tested setup)" }
+    [pscustomobject]@{ Model = "UD-Q4_K_XL";    Family = "unsloth"; MinRamGB = 64; DownloadGB = 111; Note = "EXPERIMENTAL: 111 GB, NVIDIA + NVMe only, experts streamed from SSD" }
     [pscustomobject]@{ Model = "SWIFT-Q2_0";    Family = "swift";   MinRamGB = 38; Note = "Swift 1.5 fine-tune, thinks shorter" }
     [pscustomobject]@{ Model = "SWIFT-IQ2_XS";  Family = "swift";   MinRamGB = 40; Note = "Swift 1.5 fine-tune, thinks shorter" }
     [pscustomobject]@{ Model = "SWIFT-IQ3_XXS"; Family = "swift";   MinRamGB = 47; Note = "Swift 1.5 fine-tune, thinks shorter" }
@@ -35,62 +35,18 @@ $Catalog = @(
 $ramGB = [math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB)
 $recommended = if ($ramGB -ge 90) { "UD-IQ4_XS" } elseif ($ramGB -ge 44) { "IQ2_XS" } else { "CODER" }
 
-function Format-Build($c) {
-    $mark = if ($c.Model -eq $recommended) { "  <- recommended" } elseif ($c.MinRamGB -gt $ramGB) { "  (needs $($c.MinRamGB) GB)" } else { "" }
-    "{0,-14} {1,-8} {2}{3}" -f $c.Model, $c.Family, $c.Note, $mark
-}
+. (Join-Path $PSScriptRoot "menu.ps1")
 
-# Arrow-key menu: Up/Down (Home/End) to move, Enter to install, Esc to quit. Falls back to typing a number
-# when there is no interactive console (redirected input, ISE, an AI agent's shell).
-function Select-Build {
-    $index = [array]::IndexOf($Catalog.Model, $recommended)
-    $interactive = -not [Console]::IsInputRedirected -and -not [Console]::IsOutputRedirected -and $Host.Name -eq "ConsoleHost"
-    if (-not $interactive) {
-        Write-Host "`nQwen3.8-Flash-Next builds Strata can run (your RAM: $ramGB GB):`n"
-        for ($i = 0; $i -lt $Catalog.Count; $i++) { Write-Host ("{0,2}. {1}" -f ($i + 1), (Format-Build $Catalog[$i])) }
-        $answer = Read-Host "`nNumber or name [Enter = $recommended]"
-        if (-not $answer) { return $recommended }
-        if ($answer -match '^\d+$' -and [int]$answer -ge 1 -and [int]$answer -le $Catalog.Count) { return $Catalog[[int]$answer - 1].Model }
-        return $answer
+$menuUsed = -not $Model
+if ($menuUsed) {
+    $rows = foreach ($c in $Catalog) {
+        $mark = if ($c.Model -eq $recommended) { "  <- recommended" } elseif ($c.MinRamGB -gt $ramGB) { "  (needs $($c.MinRamGB) GB)" } else { "" }
+        "{0,-14} {1,-8} {2}{3}" -f $c.Model, $c.Family, $c.Note, $mark
     }
-    Write-Host "`nQwen3.8-Flash-Next builds Strata can run (your RAM: $ramGB GB)."
-    Write-Host "Up/Down to choose, Enter to install, Esc to quit.`n"
-    # One console row per build (cut to the window width), or the in-place redraw lands on the wrong rows.
-    $width = [Console]::WindowWidth - 1
-    $rows = foreach ($c in $Catalog) { $l = Format-Build $c; if ($l.Length -gt $width - 2) { $l = $l.Substring(0, $width - 5) + "..." }; $l }
-    # Print once, then redraw in place. The top row is read after printing: at the bottom of the window,
-    # printing scrolls the buffer.
-    foreach ($r in $rows) { Write-Host "" }
-    $top = [Console]::CursorTop - $Catalog.Count
-    $cursorWas = [Console]::CursorVisible
-    [Console]::CursorVisible = $false
-    try {
-        while ($true) {
-            for ($i = 0; $i -lt $Catalog.Count; $i++) {
-                [Console]::SetCursorPosition(0, $top + $i)
-                $color = if ($i -eq $index) { "Cyan" } elseif ($Catalog[$i].MinRamGB -gt $ramGB) { "DarkGray" } else { "Gray" }
-                $prefix = if ($i -eq $index) { "> " } else { "  " }
-                Write-Host ($prefix + $rows[$i]).PadRight($width) -ForegroundColor $color -NoNewline
-            }
-            switch ([Console]::ReadKey($true).Key) {
-                "UpArrow"   { $index = ($index - 1 + $Catalog.Count) % $Catalog.Count }
-                "DownArrow" { $index = ($index + 1) % $Catalog.Count }
-                "Home"      { $index = 0 }
-                "End"       { $index = $Catalog.Count - 1 }
-                "Enter"     { return $Catalog[$index].Model }
-                "Escape"    { return "" }
-            }
-        }
-    } finally {
-        [Console]::CursorVisible = $cursorWas
-        [Console]::SetCursorPosition(0, $top + $Catalog.Count)
-        Write-Host ""
-    }
-}
-
-if (-not $Model) {
-    $Model = Select-Build
-    if (-not $Model) { Write-Host "Cancelled, nothing installed."; exit 1 }
+    $dim = @(for ($i = 0; $i -lt $Catalog.Count; $i++) { if ($Catalog[$i].MinRamGB -gt $ramGB) { $i } })
+    $i = Select-MenuItem "Qwen3.8-Flash-Next builds Strata can run (your RAM: $ramGB GB):" $rows ([array]::IndexOf($Catalog.Model, $recommended)) $dim
+    if ($i -lt 0) { Write-Host "Cancelled, nothing installed."; exit 1 }
+    $Model = $Catalog[$i].Model
 }
 # Invariant case: on a Turkish Windows "iq4".ToUpper() is "İQ4" (dotted I) and "IQ4".ToLower() is "ıq4".
 $pick = $Catalog | Where-Object { $_.Model -eq $Model.ToUpperInvariant() } | Select-Object -First 1
@@ -100,7 +56,17 @@ if ($pick.MinRamGB -gt $ramGB) {
 }
 # Strata's --model value: swift sizes drop the SWIFT- prefix; the Coder has a single size (setup picks it)
 $strataModel = switch ($pick.Family) { "swift" { $pick.Model -replace '^SWIFT-', '' } "coder" { "" } default { $pick.Model } }
-Write-Host "`nInstalling $($pick.Model) ($($pick.Family)) with $($Context / 1024)K context..."
+Write-Host "`nBuild: $($pick.Model) ($($pick.Family)), $($Context / 1024)K context"
+
+if (-not $SkipSetup -and $menuUsed) {
+    # Strata's docs give 94 / 111 GB for the Unsloth builds and ~70 GB for its own; files already there are kept.
+    $size = if ($pick.DownloadGB) { "$($pick.DownloadGB) GB" } else { "up to ~70 GB" }
+    $dataDir = Join-Path (Split-Path ([IO.Path]::GetFullPath($StrataDir)) -Parent) "Strata-data"
+    $drive = [IO.DriveInfo]::new([IO.Path]::GetPathRoot($dataDir))
+    $freeGB = [math]::Floor($drive.AvailableFreeSpace / 1GB)
+    Write-Host "Download: $size into $dataDir ($($drive.Name) has $freeGB GB free). Resumable; files already there are kept."
+    if (-not (Confirm-Step "Start the download?")) { Write-Host "Cancelled, nothing installed."; exit 1 }
+}
 
 if (-not $SkipSetup) {
     if (-not (Test-Path $StrataDir)) {

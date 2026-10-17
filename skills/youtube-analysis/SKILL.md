@@ -9,7 +9,7 @@ metadata:
 
 # YouTube analysis (local, no API key)
 
-If the user has their own channel, ask for its handle and topic once when a task needs it. Reply in Turkish.
+If the user has their own channel, ask for its handle and topic once when a task needs it. Reply in {{LANGUAGE}}.
 Run commands through `exec`. Write long outputs to files in the workspace, not into the chat.
 
 ## One video
@@ -17,8 +17,8 @@ Run commands through `exec`. Write long outputs to files in the workspace, not i
 ```powershell
 # metadata as JSON (title, channel, duration, view_count, like_count, comment_count, upload_date, tags, chapters)
 yt-dlp --skip-download --dump-single-json "<url>" > video.json
-# transcript (auto or manual subtitles, Turkish first, then English) as plain .vtt
-yt-dlp --skip-download --write-subs --write-auto-subs --sub-langs "tr,en" --sub-format vtt -o "sub.%(ext)s" "<url>"
+# transcript (auto or manual subtitles, {{LANGUAGE}} first, then English) as plain .vtt
+yt-dlp --skip-download --write-subs --write-auto-subs --sub-langs "{{LANG_CODE}},en" --sub-format vtt -o "sub.%(ext)s" "<url>"
 # summary with the local model (Strata); works on YouTube links directly
 summarize-local "<url>" --length medium
 ```

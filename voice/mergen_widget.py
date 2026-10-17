@@ -20,14 +20,14 @@ STATE_DIR = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~"))
 LOG_FILE = os.path.join(STATE_DIR, "voice.log")
 SETTINGS_FILE = os.path.join(STATE_DIR, "widget.json")
 WIDTH, HEIGHT = 210, 44
-COLORS = {                       # state -> (dot colour, label)
-    "yükleniyor": ("#64748B", "Hazırlanıyor..."),
-    "dinliyor":   ("#22C55E", "Dinliyor"),
-    "duydum":     ("#38BDF8", "Duydum..."),
-    "düşünüyor":  ("#F59E0B", "Düşünüyor..."),
-    "konuşuyor":  ("#A855F7", "Konuşuyor"),
-    "kapalı":     ("#475569", "Ses kapalı"),
-    "hata":       ("#EF4444", "Hata - log'a bak"),
+COLORS = {                       # state -> dot colour; the labels come from voice_lang.py
+    "loading":   "#64748B",
+    "listening": "#22C55E",
+    "heard":     "#38BDF8",
+    "thinking":  "#F59E0B",
+    "speaking":  "#A855F7",
+    "off":       "#475569",
+    "error":     "#EF4444",
 }
 BG, FG, MUTED = "#111827", "#E5E7EB", "#9CA3AF"
 # -----------------------------------------------------------------------------
@@ -39,6 +39,7 @@ sys.stdout = sys.stderr = _log
 
 import keyboard                  # noqa: E402  (after the stdout redirect: libraries may print on import)
 import mergen_voice as engine    # noqa: E402
+from voice_lang import T         # noqa: E402
 
 
 def load_settings() -> dict:
@@ -78,18 +79,18 @@ class Widget:
         self.canvas.create_oval(0, 0, HEIGHT, HEIGHT, fill=BG, outline=BG)
         self.canvas.create_oval(WIDTH - HEIGHT, 0, WIDTH, HEIGHT, fill=BG, outline=BG)
         self.canvas.create_rectangle(r, 0, WIDTH - r, HEIGHT, fill=BG, outline=BG)
-        self.dot = self.canvas.create_oval(14, r - 6, 26, r + 6, fill=COLORS["yükleniyor"][0], outline="")
+        self.dot = self.canvas.create_oval(14, r - 6, 26, r + 6, fill=COLORS["loading"], outline="")
         # Tk 8.6 on Windows can't draw characters outside the BMP (the 🏹 emoji), so plain text here.
         self.canvas.create_text(36, r - 7, text="MERGEN", anchor="w", fill=FG, font=("Segoe UI Semibold", 10))
-        self.label = self.canvas.create_text(36, r + 9, text=COLORS["yükleniyor"][1], anchor="w", fill=MUTED,
+        self.label = self.canvas.create_text(36, r + 9, text=T["states"]["loading"], anchor="w", fill=MUTED,
                                              font=("Segoe UI", 9))
 
         self.menu = tk.Menu(self.root, tearoff=0)
-        self.menu.add_command(label="Dinlemeyi aç / kapat  (Ctrl+Alt+M)", command=self.toggle)
-        self.menu.add_command(label="Son konuşmayı göster", command=self.show_last)
-        self.menu.add_command(label="Log klasörünü aç", command=lambda: os.startfile(STATE_DIR))
+        self.menu.add_command(label=f"{T['menu_toggle']}  (Ctrl+Alt+M)", command=self.toggle)
+        self.menu.add_command(label=T["menu_last"], command=self.show_last)
+        self.menu.add_command(label=T["menu_log"], command=lambda: os.startfile(STATE_DIR))
         self.menu.add_separator()
-        self.menu.add_command(label="Çıkış", command=self.quit)
+        self.menu.add_command(label=T["menu_quit"], command=self.quit)
 
         self.canvas.bind("<ButtonPress-1>", self.on_press)
         self.canvas.bind("<B1-Motion>", self.on_drag)
@@ -117,12 +118,12 @@ class Widget:
         except Exception as e:                            # surface any crash in the widget, details in the log
             import traceback
             traceback.print_exc()
-            self.root.after(0, self.show, "hata")
+            self.root.after(0, self.show, "error")
             print(f"engine stopped: {e!r}", flush=True)
 
     # --- ui -----------------------------------------------------------------------------
     def show(self, state: str) -> None:
-        color, text = COLORS.get(state, (MUTED, state))
+        color, text = COLORS.get(state, MUTED), T["states"].get(state, state)
         self.canvas.itemconfigure(self.dot, fill=color)
         self.canvas.itemconfigure(self.label, text=text)
 
@@ -135,8 +136,8 @@ class Widget:
 
     def show_last(self) -> None:
         said, reply = engine.last_exchange
-        messagebox.showinfo("MERGEN - son konuşma",
-                            f"Sen: {said or '-'}\n\nMERGEN: {reply or '-'}", parent=self.root)
+        messagebox.showinfo(T["last_title"],
+                            f"{T['you']}: {said or '-'}\n\nMERGEN: {reply or '-'}", parent=self.root)
 
     def on_press(self, e) -> None:
         self.drag = (e.x_root, e.y_root, self.root.winfo_x(), self.root.winfo_y(), False)

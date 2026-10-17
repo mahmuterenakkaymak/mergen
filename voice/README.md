@@ -24,8 +24,19 @@ uv venv voice\.venv --python 3.11
 uv pip install --python voice\.venv\Scripts\python.exe -r voice\requirements.txt
 ```
 
-Then put `tr_TR-dfki-medium.onnx` and `tr_TR-dfki-medium.onnx.json` from
-[rhasspy/piper-voices](https://huggingface.co/rhasspy/piper-voices) (`tr/tr_TR/dfki/medium`) in `voice\models`.
+Then put the Piper voice for the voice language chosen in `03-configure-openclaw.ps1` (`config\language.json`) from
+[rhasspy/piper-voices](https://huggingface.co/rhasspy/piper-voices) in `voice\models` - both the `.onnx` and the
+`.onnx.json`:
+
+| Voice language | Files | Folder on Hugging Face |
+|---|---|---|
+| Turkish | `tr_TR-dfki-medium.onnx` (+ `.json`) | `tr/tr_TR/dfki/medium` |
+| English | `en_US-ljspeech-medium.onnx` (+ `.json`) | `en/en_US/ljspeech/medium` |
+
+The language, the Whisper setting and every on-screen and spoken phrase live in `voice_lang.py`.
+`MERGEN_VOICE_LANG=tr|en` overrides `config\language.json` for a test; `"voice": "none"` keeps the widget off.
+The English wake word has not been tested with a real microphone yet: if English Whisper writes the name
+differently, add that spelling to `wake_aliases` in `voice_lang.py`.
 
 ## Tuning (top of `mergen_voice.py`)
 
@@ -40,7 +51,7 @@ Then put `tr_TR-dfki-medium.onnx` and `tr_TR-dfki-medium.onnx.json` from
 ## Licenses
 
 faster-whisper and the Whisper weights are MIT. The `tr_TR-dfki` Piper voice is **CC BY-NC-SA 4.0**: personal use is
-fine, monetized content is not.
+fine, monetized content is not. The `en_US-ljspeech` voice is trained on the public-domain LJ Speech dataset.
 
 `transcribe_cli.py` turns chat voice notes (Telegram) into text for OpenClaw; `tts_cli.py` writes Piper WAVs for
 OpenClaw's local TTS.

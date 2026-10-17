@@ -10,21 +10,21 @@ metadata:
 # Project brief
 
 Goal: a brief good enough that another agent can build the project without asking anything else.
-Talk to the user in Turkish; write the brief file in English (code-facing).
+Talk to the user in {{LANGUAGE}}; write the brief file in English (code-facing).
 
 ## Process
 
 1. Read what the user gave. Fill every field of the template you can infer.
 2. Ask only for what is missing or ambiguous, **max 6 questions per round**, numbered, each with your recommended
-   default ("Önerim: ... - onaylıyor musun?"). Push back on unrealistic scope or a wrong assumption and say why.
-3. Repeat until no field is "TBD", or the user says "varsayılanlarla devam".
+   default ("My suggestion: ... - OK?", in {{LANGUAGE}}). Push back on unrealistic scope or a wrong assumption and say why.
+3. Repeat until no field is "TBD", or the user says to go on with the defaults ("varsayılanlarla devam").
 4. Write `PROJECT_BRIEF.md` at the project root (create `{{PROJECTS_DIR}}\<slug>` if no folder given,
    `git init` it).
 5. **Unstated expectations - ask the user first.** Think like a typical user of this kind of product: what would
    they expect that the brief does not say (e.g. a driving game: speedometer, engine sound, wheels, lane markings,
-   minimap, reset when stuck)? Show the user, in Turkish: a 5-line summary of the brief, your numbered list of
-   unstated expectations (max 8, each with "Önerim: v1'e dahil | sonra"), and the full "Kapsam dışı" list. Ask:
-   "Hangilerini v1'e ekleyeyim? (numaralar / 'önerilenler' / 'hiçbiri' / 'Claude'a sor')".
+   minimap, reset when stuck)? Show the user, in {{LANGUAGE}}: a 5-line summary of the brief, your numbered list of
+   unstated expectations (max 8, each with "suggest: v1 | later"), and the full out-of-scope list. Ask which to add to v1
+   (numbers / "the suggested ones" / "none" / "ask Claude"; Turkish: "Claude'a sor").
    In the same turn start the 5-minute fallback, detached (it asks the critic agent and sends the result to Telegram
    if the user does not answer in time):
    ```powershell
@@ -38,7 +38,7 @@ Talk to the user in Turkish; write the brief file in English (code-facing).
    - **User comes back after the timeout** -> `BRIEF_REVIEW.md` exists: show it and ask which items to add.
    The critic only suggests; nothing goes into the brief without the user's pick.
 6. Update PROJECT_BRIEF.md (scope, acceptance tests, milestones) with the user's picks. On approval, hand over:
-   "hybrid-dev ile başlatayım mı?"
+   "Shall I start it with hybrid-dev?" (in {{LANGUAGE}})
 
 Never drop something silently: every feature you leave out goes into "Out" and is shown to the user.
 "Small test" / "küçük" means few milestones, not a bare product: keep what makes it feel complete for its type.

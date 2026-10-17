@@ -15,4 +15,5 @@ Add your own `USER.md` there (your role, skills, preferences, projects): it is p
 Then delete `BOOTSTRAP.md` and run
 `openclaw agents set-identity --workspace "<workspace>" --name MERGEN --theme "<vibe>" --emoji "🏹"`.
 
-The persona speaks Turkish by default; change the "Voice" section of `SOUL.md` for another language.
+The persona speaks the language chosen in `03-configure-openclaw.ps1` (`{{LANGUAGE}}` in `SOUL.md` and the
+skills); identity files that already exist are kept, so edit the "Speak ..." line in `SOUL.md` to change it later.

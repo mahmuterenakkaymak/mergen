@@ -1,13 +1,14 @@
-"""MERGEN voice: talk to OpenClaw in Turkish; the reply is printed and spoken.
+"""MERGEN voice: talk to OpenClaw in Turkish or English (voice_lang.py); the reply is printed and spoken.
 
 Two ways to talk (both active at the same time):
   - push-to-talk: hold F9, speak, release;
   - wake word: say "Mergen, ..." - the mic listens continuously, a small Whisper model checks each utterance for
-    the name, and only then the large model transcribes it. "Mergen" alone -> it answers "Efendim" and takes the
+    the name, and only then the large model transcribes it. "Mergen" alone -> it answers "Efendim?" / "Yes?" and takes the
     next sentence as the command.
 
 Speech-to-text (faster-whisper) and text-to-speech (Piper) run locally on the CPU - no VRAM, no audio leaves the PC.
-The Turkish Piper voice (dfki) is CC BY-NC-SA 4.0: personal use only, not for monetized videos.
+The Turkish Piper voice (dfki) is CC BY-NC-SA 4.0: personal use only, not for monetized videos. The English one
+(ljspeech) is trained on public-domain data.
 
 Run:  voice\.venv\Scripts\python.exe voice\mergen_voice.py      (or voice\mergen-voice.bat)
 """
@@ -26,16 +27,19 @@ import sounddevice as sd
 from faster_whisper import WhisperModel
 from piper import PiperVoice
 
+import voice_lang as L
+
 # --- config -----------------------------------------------------------------
 HOTKEY = "f9"                       # hold to talk
 WAKE_WORD = True                    # also listen for "Mergen, ..." (mic always on, all local)
 WAKE_NAME = "mergen"
+WAKE_NAMES = [WAKE_NAME, *L.T["wake_aliases"]]   # English Whisper may write "Morgan" etc.
 WAKE_SIMILARITY = 0.7               # fuzzy match for Whisper spellings like "Mercen", "Merken", "Bergen"
 WAKE_POSITION = 3                   # the name may be one of the first 3 words ("hey Mergen", noise + "Mergen")
 WAKE_MODEL = "small"                # fast model that only looks for the name (~480 MB; "base" missed it often)
 FOLLOWUP_S = 8                      # after "Mergen" alone: seconds to wait for the command
 LONE_NAME_S = 1.2                   # utterances shorter than this that start with the name = "Mergen" alone
-LANGUAGE = "tr"
+LANGUAGE = L.T["whisper"]           # from config/language.json (voice_lang.py)
 MODEL = "large-v3-turbo"            # transcribes the actual command (~1.6 GB)
 COMPUTE_TYPE = "int8"
 CPU_THREADS = 12                    # 16 cores: leave 4 for Strata and the desktop
@@ -59,7 +63,7 @@ SESSION_ID = "mergen-voice"         # one OpenClaw session, so follow-up command
 OPENCLAW = "openclaw.cmd" if sys.platform == "win32" else "openclaw"
 AGENT_TIMEOUT_S = 900
 SPEAK = True                        # read replies aloud
-VOICE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models", "tr_TR-dfki-medium.onnx")
+VOICE = L.PIPER_VOICE               # Turkish dfki or English ljspeech, in voice\models
 SPEAK_MAX_CHARS = 700               # long replies: speak the start, the full text stays on screen
 # -----------------------------------------------------------------------------
 
@@ -67,7 +71,7 @@ blocks: "queue.Queue[np.ndarray]" = queue.Queue()
 muted = False                       # True while MERGEN speaks or thinks, so it doesn't hear itself
 enabled = True                      # the widget / Ctrl+Alt+M turns listening off and on
 threshold = MIN_START_RMS           # set by calibrate() when listening starts
-status_cb = None                    # called with "dinliyor" | "duydum" | "düşünüyor" | "konuşuyor" | "kapalı"
+status_cb = None                    # called with "listening" | "heard" | "thinking" | "speaking" | "off"
 last_exchange = ("", "")            # (what the user said, what MERGEN answered)
 
 
@@ -105,7 +109,7 @@ def set_enabled(on: bool) -> None:
     drain()
     if not on:
         sd.stop()                                             # stop talking too
-    set_status("dinliyor" if on else "kapalı")
+    set_status("listening" if on else "off")
 
 
 mic_rate = SAMPLE_RATE              # the mic's own rate; blocks are resampled to 16 kHz as they arrive
@@ -144,13 +148,13 @@ def plausible(text: str, seconds: float) -> bool:
 
 
 def strip_wake(text: str) -> str | None:
-    """If the name (fuzzy) is among the first WAKE_POSITION words, return what follows it (may be ''); else None.
+    """If the name (fuzzy, or one of the language's aliases) is among the first WAKE_POSITION words, return what follows it (may be ''); else None.
     Not only the first word: a filler ("hey", "şey") or a noise fragment often lands before it."""
     for i, m in enumerate(re.finditer(r"[\wçğıöşüÇĞİÖŞÜ]+", text)):
         if i >= WAKE_POSITION:
             return None
         word = m.group().lower().replace("ı", "i")
-        if difflib.SequenceMatcher(None, word, WAKE_NAME).ratio() >= WAKE_SIMILARITY:
+        if any(difflib.SequenceMatcher(None, word, name).ratio() >= WAKE_SIMILARITY for name in WAKE_NAMES):
             return re.sub(r"^\W*", "", text[m.end():]).strip()
     return None
 
@@ -190,7 +194,7 @@ def next_utterance(timeout_s: float | None = None) -> tuple[np.ndarray, bool]:
 
 def speakable(text: str) -> str:
     """Strip Markdown, code and links so the voice reads only words."""
-    text = re.sub(r"```.*?```", " (kod ekranda) ", text, flags=re.S)
+    text = re.sub(r"```.*?```", L.T["code_on_screen"], text, flags=re.S)
     text = re.sub(r"`([^`]*)`", r"\1", text)
     text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)          # [label](url) -> label
     text = re.sub(r"https?://\S+", "link", text)
@@ -198,7 +202,7 @@ def speakable(text: str) -> str:
     text = re.sub(r"[^\w\s.,;:!?%'()\-/çğıöşüÇĞİÖŞÜ]", " ", text)   # emoji and symbols
     text = re.sub(r"\s+", " ", text).strip()
     if len(text) > SPEAK_MAX_CHARS:
-        text = text[:SPEAK_MAX_CHARS].rsplit(".", 1)[0] + ". Devamı ekranda."
+        text = text[:SPEAK_MAX_CHARS].rsplit(".", 1)[0] + L.T["rest_on_screen"]
     return text
 
 
@@ -259,16 +263,17 @@ def ask_openclaw(text: str) -> str:
 
 def handle(command: str, model_time: float, seconds: float, voice) -> None:
     global last_exchange
-    print(f"Sen ({seconds:.1f} sn, yazıya çevirme {model_time:.1f} sn): {command}", flush=True)
-    set_status("düşünüyor")
+    print(f"{L.T['you']} ({seconds:.1f} {L.T['seconds']}, {L.T['transcribing']} {model_time:.1f} {L.T['seconds']}): "
+          f"{command}", flush=True)
+    set_status("thinking")
     t0 = time.time()
     reply = ask_openclaw(command)
-    print(f"MERGEN ({time.time() - t0:.0f} sn): {reply}\n", flush=True)
+    print(f"MERGEN ({time.time() - t0:.0f} {L.T['seconds']}): {reply}\n", flush=True)
     last_exchange = (command, reply)
     if enabled:                                               # turned off while thinking -> stay quiet
-        set_status("konuşuyor")
+        set_status("speaking")
         speak(voice, reply)
-    set_status("dinliyor" if enabled else "kapalı")
+    set_status("listening" if enabled else "off")
 
 
 def load_models():
@@ -280,10 +285,10 @@ def load_models():
 
 
 def main() -> None:
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")   # Turkish text even when output is piped
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")   # non-ASCII text even when output is piped
     model, wake, voice = load_models()
-    how = f"[{HOTKEY.upper()}] basılı tut" + (' ya da "Mergen, ..." de' if WAKE_WORD else "")
-    print(f"\nMERGEN dinliyor: {how}. Çıkış: Ctrl+C\n", flush=True)
+    how = f"[{HOTKEY.upper()}] {L.T['hold']}" + (L.T["or_say"] if WAKE_WORD else "")
+    print(f"\n{L.T['listening']}: {how}. {L.T['quit_hint']}\n", flush=True)
     listen(model, wake, voice)
 
 
@@ -310,7 +315,7 @@ def listen(model, wake, voice) -> None:
     threshold = calibrate(mic, mic_rate)
     print(f"[audio] listening on '{info['name']}' ({mic_rate} Hz, WASAPI), speech threshold RMS {threshold:.4f}",
           flush=True)
-    set_status("dinliyor" if enabled else "kapalı")
+    set_status("listening" if enabled else "off")
     with sd.InputStream(samplerate=mic_rate, channels=1, dtype="float32", device=mic,
                         blocksize=int(mic_rate * BLOCK_S), callback=on_audio):
         while True:
@@ -322,14 +327,14 @@ def listen(model, wake, voice) -> None:
             print(f"[audio] utterance {seconds:.1f}s, RMS {level:.4f}{' (F9)' if ptt else ''}", flush=True)
 
             if ptt:
-                set_status("duydum")
+                set_status("heard")
                 t0 = time.time()
                 text = transcribe(model, audio)
                 if text:
                     handle(text, time.time() - t0, seconds, voice)
                 else:
-                    print("(anlaşılamadı)", flush=True)
-                    set_status("dinliyor")
+                    print(L.T["not_understood"], flush=True)
+                    set_status("listening")
                 continue
 
             if not wake:
@@ -342,7 +347,7 @@ def listen(model, wake, voice) -> None:
                   flush=True)
             if not hit:
                 continue
-            set_status("duydum")
+            set_status("heard")
             t0 = time.time()
             if seconds < LONE_NAME_S:
                 # A lone short "Mergen": the unbiased big model misses it about half the time, and a false hit
@@ -355,20 +360,20 @@ def listen(model, wake, voice) -> None:
                 print(f"[wake] stage 2: {('command: ' + repr(full)) if command is not None else 'rejected'}",
                       flush=True)
                 if command is None:                            # e.g. "Meryem ..." - not for us
-                    set_status("dinliyor")
+                    set_status("listening")
                     continue
             if not command:                                    # just "Mergen" -> wait for the command
-                print("MERGEN: Efendim?", flush=True)
-                speak(voice, "Efendim?")
-                set_status("dinliyor")
+                print(f"MERGEN: {L.T['yes']}", flush=True)
+                speak(voice, L.T["yes"])
+                set_status("listening")
                 follow, _ = next_utterance(timeout_s=FOLLOWUP_S)
                 if len(follow) / SAMPLE_RATE < MIN_SECONDS:
                     continue
-                set_status("duydum")
+                set_status("heard")
                 t0, seconds = time.time(), len(follow) / SAMPLE_RATE
                 command = transcribe(model, follow)
                 if not command:
-                    set_status("dinliyor")
+                    set_status("listening")
                     continue
             handle(command, time.time() - t0, seconds, voice)
 
@@ -377,4 +382,4 @@ if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        print("\nGörüşürüz.")
+        print("\n" + L.T["bye"])

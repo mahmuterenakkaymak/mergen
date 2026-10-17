@@ -9,9 +9,11 @@ import sys
 
 from faster_whisper import WhisperModel
 
+import voice_lang as L
+
 # --- config -----------------------------------------------------------------
 MODEL = "large-v3-turbo"
-LANGUAGE = "tr"
+LANGUAGE = None if L.CODE == "none" else L.T["whisper"]   # None = Whisper detects the language
 COMPUTE_TYPE = "int8"
 CPU_THREADS = 12
 # -----------------------------------------------------------------------------
