@@ -3,7 +3,7 @@
 This page is written for an AI coding assistant (Claude Code, Cursor, Codex, GitHub Copilot, ...) that a user asked to
 set up MERGEN on their PC. MERGEN is a Turkish, local-first assistant: [Strata](https://github.com/Niko1221/Strata)
 runs Qwen3.8-Flash-Next on the GPU + system RAM, [OpenClaw](https://docs.openclaw.ai) runs the agent, and everything
-listens on `127.0.0.1`. The human version of these steps is the [Quick start](../README.md#quick-start).
+listens on `127.0.0.1`. The human version of these steps is the [Install section](../README.md#install).
 
 Work through the steps in order. Tell the user what you are doing in plain words; they may not be technical.
 
@@ -66,7 +66,7 @@ By RAM, and ask whether the user mainly wants it for code (then `CODER` is a goo
 | 96 GB+ | `UD-IQ4_XS` | ~4-bit Unsloth build, this repo's tested setup (94 GB download) |
 
 All builds and what they need: run `.\scripts\01-install-strata.ps1` without `-Model` in a real console, or see the
-table in the [README](../README.md#quick-start). `SWIFT-*` builds think shorter; `UD-Q4_K_XL` is experimental.
+table in the [README](../README.md#model-builds). `SWIFT-*` builds think shorter; `UD-Q4_K_XL` is experimental.
 
 ## 4. Install, in order
 
