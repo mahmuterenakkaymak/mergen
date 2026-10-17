@@ -1,0 +1,22 @@
+# Local SearXNG for OpenClaw deep research. Bound to 127.0.0.1 only (see scripts/start-searxng.ps1).
+# The secret key comes from the SEARXNG_SECRET environment variable of the container, not from this file.
+use_default_settings: true
+
+general:
+  instance_name: "local-research"
+
+server:
+  limiter: false          # single local user; the limiter needs Redis
+  image_proxy: false
+  public_instance: false
+
+search:
+  safe_search: 0
+  autocomplete: ""
+  default_lang: "auto"
+  formats:
+    - html
+    - json                # the MCP server reads JSON results
+
+ui:
+  default_theme: simple

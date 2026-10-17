@@ -1,0 +1,682 @@
+"""Hybrid development orchestrator: Claude (cloud) = brain, local Qwen via claude-local = hands.
+
+The loop is deterministic code, not an LLM: task order, running the accept checks, retry counting,
+escalation, the cloud-call budget and the test-tampering check all live here.
+
+    python hybrid_run.py <project_dir>            # plan (if no TASKS.md yet), then build
+    python hybrid_run.py <project_dir> --plan-only
+    python hybrid_run.py <project_dir> --build-only
+    python hybrid_run.py <project_dir> --brain local   # fully local: Strata also plans, reviews and rescues
+    python hybrid_run.py <project_dir> --critique-only  # brain reads PROJECT_BRIEF.md, writes BRIEF_REVIEW.md
+    python hybrid_run.py <project_dir> --critique-after 300   # same, but only if the user has not answered in 300 s
+
+The brain choice (cloud | local) is saved in .hybrid/mode.json, so a resumed --build-only run keeps it.
+
+Project files (the agents talk only through these):
+    PROJECT_BRIEF.md  (you)        PLAN.md, TASKS.md (BRAIN)        REVIEW.md (BRAIN)
+    .hybrid/log.md, .hybrid/budget.json, .hybrid/report.json (this script)
+
+TASKS.md line format (written by BRAIN, parsed here):
+    - [ ] T01 | M1 | short description | accept: <shell command that exits 0 when the task is done>
+"""
+import argparse
+import ast
+import datetime as dt
+import difflib
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+from concurrent.futures import Future, ThreadPoolExecutor
+from pathlib import Path
+
+# --- config -----------------------------------------------------------------
+BRAIN_PLAN_MODEL = "opus"          # one planning call per project
+BRAIN_REVIEW_MODEL = "sonnet"      # milestone reviews and rescues
+CLAUDE_EXE = "claude"              # Claude Code CLI; BRAIN uses your Pro login
+HANDS_ENV = {                      # HANDS = the same CLI pointed at the local Strata model (like claude-local.cmd)
+    "ANTHROPIC_BASE_URL": "http://127.0.0.1:8080",
+    "ANTHROPIC_AUTH_TOKEN": "strata-local",
+    "ANTHROPIC_MODEL": "claude-sonnet-4-5",          # Claude Code only accepts names it knows; Strata ignores it
+    "ANTHROPIC_SMALL_FAST_MODEL": "claude-haiku-4-5",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+    "API_TIMEOUT_MS": "900000",
+}
+# Inherited variables that would hijack the cloud brain. Found 2026-10-16: user-level ANTHROPIC_BASE_URL=
+# http://localhost:8001 (a dead proxy from an old setup) made every brain call fail with ECONNREFUSED when the
+# orchestrator was started from OpenClaw. The brain gets them removed; the hands get their own values above.
+STRIP_FOR_BRAIN = ("ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_MODEL",
+                   "ANTHROPIC_SMALL_FAST_MODEL", "CLAUDE_CODE_USE_LOCAL", "CLAUDE_CODE_LOCAL_URL")
+MAX_BRAIN_CALLS = 10               # plan + reviews + rescues, per run (cloud brain: Pro limits)
+MAX_LOCAL_BRAIN_CALLS = 30         # same cap for the local brain - free, but stops a review/fix loop
+MAX_TRIES_LOCAL = 2                # HANDS attempts before a rescue
+MAX_RESCUES_PER_TASK = 1
+AGENT_TIMEOUT_S = 1800             # one agent call
+CONTEXT_PLAN_CHARS = 12000         # PLAN.md preloaded into every hands prompt (cut beyond this)
+CONTEXT_FILES_CHARS = 40000        # files named in the task text, preloaded until this budget is used
+ACCEPT_TIMEOUT_S = 600             # one accept check
+# Workers are confined to the project folder: Claude Code's acceptEdits mode only auto-approves file edits and
+# file commands inside the working directory, and Bash is limited to these prefixes. A bare "Bash" here would allow
+# every command anywhere - tested 2026-10-16: with this list, rm / PowerShell Remove-Item outside the project are
+# blocked while tests still run. Add a prefix (e.g. Bash(npm:*)) per project stack if needed.
+ALLOWED_TOOLS = ",".join([
+    "Read", "Write", "Edit", "Glob", "Grep",
+    "Bash(.venv/Scripts/python:*)", "Bash(.venv\\Scripts\\python:*)", "Bash(python:*)", "Bash(uv:*)",
+    "Bash(pytest:*)", "Bash(dotnet build:*)", "Bash(dotnet test:*)",
+    "Bash(dotnet new:*)", "Bash(dotnet add:*)", "Bash(dotnet restore:*)", "Bash(dotnet ef:*)",
+    "Bash(dotnet tool restore:*)", "Bash(dotnet sln:*)",
+    "Bash(npm install:*)", "Bash(npm test:*)", "Bash(npm run:*)", "Bash(npx vitest:*)", "Bash(node:*)",
+    "Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)", "Bash(git show:*)",
+])
+# Push notifications to the user's phone at the moments that matter (review, FAILED, rescue, limit, finish).
+# Sent by this script through OpenClaw's Telegram channel - no LLM turn, so no load on the GPU the hands are using.
+# MERGEN cannot poll the log by itself (it only runs when spoken to). Empty target disables notifications.
+NOTIFY_TELEGRAM_TARGET = os.environ.get("HYBRID_NOTIFY_TELEGRAM", "")   # your paired Telegram chat id
+# node + entry script: openclaw.cmd re-parses arguments through cmd.exe and mangles them
+OPENCLAW_ENTRY = os.environ.get("OPENCLAW_ENTRY") or str(
+    Path(shutil.which("openclaw") or "openclaw").resolve().parent / "node_modules" / "openclaw" / "openclaw.mjs")
+# Test files guarded against tampering. Python: per test function (AST). Other languages: per file - no committed
+# line may be removed or changed (new tests may be added). Until 2026-10-16 only .py was checked: a JS project's
+# hands edited an existing vitest file unnoticed. A test file named in the task text may be edited (review fix tasks
+# that say "update tests/x.test.js because it encodes the wrong behaviour").
+TEST_GLOBS = ["tests/**/*.py", "test_*.py", "*_test.py",
+              "*.test.js", "*.spec.js", "*.test.ts", "*.spec.ts", "*.test.mjs",
+              "tests/**/*.cs", "*Tests.cs", "*Test.cs"]
+# Claude Code wording seen 2026-10-16: "You've hit your session limit · resets 4:40pm" - "session limit" was missing,
+# so the M3 review of town-driving-game-v2 failed silently instead of falling back to the local brain.
+LIMIT_MARKERS = ("usage limit", "session limit", "weekly limit", "hit your", "rate limit", "limit reached", "quota",
+                 "429", "overloaded")
+# -----------------------------------------------------------------------------
+
+def test_functions(rel: str, src: str) -> dict[str, str]:
+    """'file::test_name' -> AST dump of each top-level or class-level test function (unparseable file -> {})."""
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return {}
+    out = {}
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test"):
+            out[f"{rel}::{node.name}"] = ast.dump(node, include_attributes=False)
+    return out
+
+
+TASK_RE = re.compile(r"^- \[( |x)\] (T\d+) \| (M\d+) \| (.+?) \| accept: (.+)$")
+
+
+class Run:
+    def __init__(self, root: Path, brain_mode: str | None = None):
+        self.root = root
+        self.state = root / ".hybrid"
+        self.state.mkdir(exist_ok=True)
+        mode_file = self.state / "mode.json"
+        if brain_mode:
+            mode_file.write_text(json.dumps({"brain": brain_mode}))
+        saved = json.loads(mode_file.read_text())["brain"] if mode_file.exists() else "cloud"
+        self.local = saved == "local"
+        self.budget_file = self.state / "budget.json"
+        self.budget = json.loads(self.budget_file.read_text()) if self.budget_file.exists() else {"brain_calls": 0}
+        self.brain_blocked = False
+        self.stats = {"tasks": 0, "first_try": 0, "local_retries": 0, "rescues": 0, "failed": [], "reviews": 0}
+        # Cloud reviews run in the background (own git worktree) while the hands keep building - added 2026-10-16
+        # after a 49-task run spent 5-10 min per milestone with the hands idle waiting for Sonnet.
+        self.lock = threading.RLock()
+        self.pool = ThreadPoolExecutor(max_workers=2)
+        self.pending: dict[str, tuple[Path, set, Future]] = {}   # ms -> (worktree, TASKS.md lines at start, job)
+        self.review_failures: dict[str, int] = {}
+
+    # --- logging --------------------------------------------------------------
+    def log(self, role: str, msg: str) -> None:
+        line = f"{dt.datetime.now():%Y-%m-%d %H:%M:%S} | {role:<6} | {msg}"
+        with self.lock:
+            print(line, flush=True)
+            with open(self.state / "log.md", "a", encoding="utf-8") as f:
+                f.write(line + "\n")
+
+    def notify(self, msg: str) -> None:
+        """Best effort: a failed notification never stops the build."""
+        node = shutil.which("node")
+        if not (NOTIFY_TELEGRAM_TARGET and node and Path(OPENCLAW_ENTRY).exists()):
+            return
+        text = f"🤝 {self.root.name}: {msg}"[:3500]
+        try:
+            r = subprocess.run([node, OPENCLAW_ENTRY, "message", "send", "--channel", "telegram",
+                                "--target", NOTIFY_TELEGRAM_TARGET, "--message", text],
+                               stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8",
+                               errors="replace", timeout=120)
+            if r.returncode != 0:
+                self.log("ORCH", f"notify failed: {(r.stderr or r.stdout).strip()[-200:]}")
+        except Exception as e:  # noqa: BLE001 - notifications are optional
+            self.log("ORCH", f"notify failed: {e}")
+
+    def save_budget(self) -> None:
+        self.budget_file.write_text(json.dumps(self.budget, indent=1))
+
+    # --- agents ---------------------------------------------------------------
+    def agent(self, label: str, prompt: str, model: str | None = None, env: dict | None = None,
+              cwd: Path | None = None) -> tuple[bool, str]:
+        # Call claude.exe directly and send the prompt on stdin: a .cmd wrapper re-parses arguments through cmd.exe,
+        # which dropped --permission-mode for HANDS (edits then waited for an approval nobody could give).
+        exe = shutil.which(CLAUDE_EXE) or CLAUDE_EXE
+        args = [exe, "-p", "--permission-mode", "acceptEdits", "--allowedTools", ALLOWED_TOOLS]
+        if model:
+            args += ["--model", model]
+        base = {k: v for k, v in os.environ.items() if env is not None or k not in STRIP_FOR_BRAIN}
+        try:
+            r = subprocess.run(args, cwd=cwd or self.root, input=prompt, capture_output=True, text=True,
+                               encoding="utf-8", errors="replace", timeout=AGENT_TIMEOUT_S,
+                               env={**base, **(env or {})})
+            out = ((r.stdout or "") + (r.stderr or "")).strip()
+            ok = r.returncode == 0
+        except subprocess.TimeoutExpired:
+            ok, out = False, "agent timed out"
+        logs = self.state / "agents"
+        logs.mkdir(exist_ok=True)
+        stamp = dt.datetime.now().strftime("%H%M%S%f")[:-3]   # ms: parallel agents must not share a log name
+        (logs / f"{stamp}-{label}.log").write_text(f"PROMPT:\n{prompt}\n\nOUTPUT (ok={ok}):\n{out}\n", encoding="utf-8")
+        return ok, out
+
+    def brain_name(self, model: str) -> str:
+        return "local Strata" if self.local else model
+
+    def fall_back_to_local(self, why: str) -> None:
+        """Cloud brain unavailable mid-run -> the local model takes over plan/review/rescue for the rest of this run.
+        In memory only (not mode.json): the next run tries Claude again, since session limits reset."""
+        with self.lock:
+            if self.local:
+                return
+            self.local = True
+        self.log("BRAIN", f"{why} - local Strata is the brain for the rest of this run")
+        self.notify(f"{why}: run durmadı, bundan sonra plan/review/rescue local Strata'da (tam local).")
+
+    def brain(self, prompt: str, model: str, cwd: Path | None = None) -> tuple[bool, str]:
+        with self.lock:
+            if not self.local and self.budget["brain_calls"] >= MAX_BRAIN_CALLS:
+                self.fall_back_to_local(f"cloud budget of {MAX_BRAIN_CALLS} calls used")
+            if self.brain_blocked or self.budget["brain_calls"] >= MAX_BRAIN_CALLS + MAX_LOCAL_BRAIN_CALLS:
+                return False, "brain unavailable (budget)"
+            self.budget["brain_calls"] += 1
+            self.save_budget()
+            local = self.local
+        if local:                          # same CLI and endpoint as the hands, fresh context, brain prompt
+            return self.agent("brain-local", prompt, env=HANDS_ENV, cwd=cwd)
+        ok, out = self.agent(f"brain-{model}", prompt, model, cwd=cwd)
+        if not ok and any(m in out.lower() for m in LIMIT_MARKERS):
+            self.fall_back_to_local("Claude usage limit hit")
+            return self.brain(prompt, model, cwd)   # retry the same job locally
+        return ok, out
+
+    def hands(self, prompt: str) -> tuple[bool, str]:
+        return self.agent("hands", prompt, env=HANDS_ENV)
+
+    # --- git / checks -----------------------------------------------------------
+    def git(self, *args: str) -> str:
+        # UTF-8 explicitly: Windows' default code page garbles non-ASCII test strings (e.g. "≠"), which made the
+        # tamper check see unchanged tests as changed.
+        return subprocess.run(["git", *args], cwd=self.root, capture_output=True, text=True,
+                              encoding="utf-8", errors="replace").stdout.strip()
+
+    def committed_tests(self) -> dict[str, str]:
+        """Python: every test function in the last commit, 'file::name' -> AST dump of its body.
+        Other test files: 'file::*' -> the committed text. New tests and changed imports (Python) are fine;
+        an existing test that changed or vanished is tampering."""
+        found = {}
+        for rel in self.git("ls-files").splitlines():
+            if not any(Path(rel).match(g) for g in TEST_GLOBS):
+                continue
+            src = self.git("show", f"HEAD:{rel}")
+            if rel.endswith(".py"):
+                found.update(test_functions(rel, src))
+            else:
+                found[f"{rel}::*"] = src
+        return found
+
+    def changed_tests(self, before: dict[str, str], allowed: str = "") -> list[str]:
+        """Keys of tampered tests. Files whose path appears in `allowed` (the task text) are exempt."""
+        now, out = {}, []
+        for key, old in before.items():
+            rel, name = key.split("::", 1)
+            if rel in allowed:
+                continue
+            p = self.root / rel
+            cur = p.read_text(encoding="utf-8", errors="replace") if p.exists() else None
+            if name == "*":                    # line-based: every committed line must still be there, in order
+                if cur is None or self.lines_removed(old, cur):
+                    out.append(key)
+                continue
+            if rel not in now:
+                now[rel] = test_functions(rel, cur) if cur is not None else {}
+            if now[rel].get(name) != old:
+                out.append(key)
+        return sorted(out)
+
+    @staticmethod
+    def lines_removed(old: str, new: str) -> bool:
+        a = [l.strip() for l in old.splitlines() if l.strip()]
+        b = [l.strip() for l in new.splitlines() if l.strip()]
+        sm = difflib.SequenceMatcher(a=a, b=b, autojunk=False)
+        return any(tag in ("replace", "delete") for tag, *_ in sm.get_opcodes())
+
+    def accept(self, command: str) -> tuple[bool, str]:
+        try:
+            r = subprocess.run(command, cwd=self.root, shell=True, capture_output=True, text=True,
+                               encoding="utf-8", errors="replace", timeout=ACCEPT_TIMEOUT_S)
+        except subprocess.TimeoutExpired:
+            return False, "accept check timed out"
+        return r.returncode == 0, ((r.stdout or "") + (r.stderr or ""))[-3000:]
+
+    # --- tasks file -------------------------------------------------------------
+    def tasks(self) -> list[dict]:
+        path = self.root / "TASKS.md"
+        out = []
+        for line in path.read_text(encoding="utf-8").splitlines() if path.exists() else []:
+            m = TASK_RE.match(line.strip())
+            if m:
+                accept = m[5].strip().strip("`").strip()     # models like to wrap commands in backticks
+                out.append({"done": m[1] == "x", "id": m[2], "ms": m[3], "desc": m[4].strip(), "accept": accept})
+        return out
+
+    def tick(self, task_id: str) -> None:
+        path = self.root / "TASKS.md"
+        text = path.read_text(encoding="utf-8")
+        text = re.sub(rf"^- \[ \] {task_id} \|", f"- [x] {task_id} |", text, count=1, flags=re.M)
+        path.write_text(text, encoding="utf-8")
+
+    # --- phases -------------------------------------------------------------------
+    def critique(self) -> bool:
+        """Agent-to-agent brief review: a second agent lists what users of this kind of product expect but the brief
+        does not say (found 2026-10-16: a 'small test' game brief silently dropped sound, HUD, minimap, wheels, lane
+        lines and a stuck-reset; the build was solid but felt empty). The user decides; nothing is added here."""
+        if not (self.root / "PROJECT_BRIEF.md").exists():
+            self.log("ORCH", "PROJECT_BRIEF.md missing - write it first (project-brief skill)")
+            return False
+        self.log("BRAIN", f"brief critique with {self.brain_name(BRAIN_PLAN_MODEL)}")
+        ok, out = self.brain(CRITIQUE_PROMPT, BRAIN_PLAN_MODEL)
+        done = ok and (self.root / "BRIEF_REVIEW.md").exists()
+        self.log("BRAIN", f"critique {'done' if done else 'FAILED'}")
+        if not done:
+            self.log("BRAIN", out[-800:])
+        return done
+
+    def critique_after(self, seconds: int) -> None:
+        """MERGEN asks the user first and starts this detached. It cannot wake itself, so the timeout lives here:
+        if the user has not answered (MERGEN creates .hybrid/brief_answered) the critic runs and the result goes to
+        Telegram. No LLM turn while waiting."""
+        marker = self.state / "brief_answered"
+        deadline = time.time() + seconds
+        while time.time() < deadline:
+            if marker.exists():
+                self.log("ORCH", "brief answered by the user - critique not needed")
+                return
+            time.sleep(5)
+        marker.write_text("timeout")
+        self.log("ORCH", f"no answer in {seconds} s - asking the critic")
+        if self.critique():
+            text = (self.root / "BRIEF_REVIEW.md").read_text(encoding="utf-8", errors="replace")
+            self.notify(f"{seconds // 60} dk cevap gelmedi, brief'i {self.brain_name(BRAIN_PLAN_MODEL)} eleştirdi. "
+                        f"MERGEN'e hangilerini ekleyeceğini yaz:\n{text[:2500]}")
+        else:
+            self.notify("brief eleştirisi başarısız - MERGEN'e 'Claude'a sor' yazarak tekrar deneyebilirsin.")
+
+    def plan(self) -> bool:
+        if not (self.root / "PROJECT_BRIEF.md").exists():
+            self.log("ORCH", "PROJECT_BRIEF.md missing - write it first (project-brief skill)")
+            return False
+        self.log("BRAIN", f"planning with {self.brain_name(BRAIN_PLAN_MODEL)}")
+        ok, out = self.brain(PLAN_PROMPT, BRAIN_PLAN_MODEL)
+        n = len(self.tasks())
+        self.log("BRAIN", f"plan {'done' if ok and n else 'FAILED'}: {n} tasks")
+        if not (ok and n):
+            self.log("BRAIN", out[-800:])
+            self.notify(f"plan BAŞARISIZ: {out[-300:]}")
+            return False
+        self.notify(f"plan hazır: {n} görev. MERGEN'e onay ver, build başlasın.")
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "Plan: PLAN.md and TASKS.md (brain)")
+        return True
+
+    def task_context(self, t: dict) -> str:
+        """Preloaded context for the hands, so a fresh session does not spend its first turns reading the project
+        (v2 2026-10-16: 10-25 turns per task, later tasks read 1.2-1.7M tokens). Text only, capped."""
+        parts = []
+        plan = self.root / "PLAN.md"
+        if plan.exists():
+            parts.append("## PLAN.md\n" + plan.read_text(encoding="utf-8", errors="replace")[:CONTEXT_PLAN_CHARS])
+        files = [f for f in self.git("ls-files").splitlines() if not f.startswith(".hybrid/")]
+        parts.append("## Files in the project\n" + "\n".join(files[:300]))
+        budget = CONTEXT_FILES_CHARS
+        named = dict.fromkeys(re.findall(r"[\w./-]+\.(?:js|mjs|ts|py|cs|html|css|json)", t["desc"]))
+        for rel in named:
+            if not (self.root / rel).is_file():           # "game.js" without a folder -> the one tracked file
+                hits = [f for f in files if f.endswith("/" + rel)]
+                rel = hits[0] if len(hits) == 1 else rel
+            p = self.root / rel
+            if not p.is_file() or budget <= 0:
+                continue
+            body = p.read_text(encoding="utf-8", errors="replace")
+            if len(body) > budget:
+                parts.append(f"## {rel} (too long, read it yourself)")
+                continue
+            budget -= len(body)
+            parts.append(f"## {rel}\n```\n{body}\n```")
+        return "# Context (current, from the orchestrator)\n\n" + "\n\n".join(parts)
+
+    def run_task(self, t: dict) -> bool:
+        self.stats["tasks"] += 1
+        before = self.committed_tests()
+        feedback = ""
+        for attempt in range(1, MAX_TRIES_LOCAL + 1):
+            self.log("HANDS", f"{t['id']} try {attempt}: {t['desc']}")
+            self.hands(HANDS_PROMPT.format(**t, feedback=feedback, context=self.task_context(t)))
+            tampered = self.changed_tests(before, allowed=t["desc"])
+            if tampered:
+                files = sorted({k.split("::")[0] for k in tampered})
+                self.log("ORCH", f"{t['id']}: existing tests changed {tampered} - restoring {files}")
+                self.git("checkout", "HEAD", "--", *files)
+                feedback = (f"You changed or removed existing tests {tampered}; that is not allowed. Those files were "
+                            "restored to the last commit (your new tests in them are gone too - add them again). "
+                            "Fix the code, not the tests.")
+                self.stats["local_retries"] += 1
+                continue
+            ok, out = self.accept(t["accept"])
+            if ok:
+                if attempt == 1:
+                    self.stats["first_try"] += 1
+                return self.commit(t, "hands")
+            feedback = f"The accept check `{t['accept']}` failed:\n{out}"
+            self.stats["local_retries"] += 1
+        # rescue
+        for _ in range(MAX_RESCUES_PER_TASK):
+            self.log("BRAIN", f"{t['id']}: rescue with {self.brain_name(BRAIN_REVIEW_MODEL)}")
+            self.notify(f"{t['id']} yerel modelde {MAX_TRIES_LOCAL} kez geçmedi, {self.brain_name(BRAIN_REVIEW_MODEL)} kurtarıyor.")
+            ok, out = self.brain(RESCUE_PROMPT.format(**t, feedback=feedback), BRAIN_REVIEW_MODEL)
+            if not ok:
+                break
+            self.stats["rescues"] += 1
+            ok, out = self.accept(t["accept"])
+            if ok:
+                return self.commit(t, "brain")
+            feedback = out
+        self.log("ORCH", f"{t['id']}: FAILED - left open")
+        self.notify(f"❌ {t['id']} BAŞARISIZ, açık bırakıldı: {t['desc'][:150]}")
+        self.stats["failed"].append(t["id"])
+        return False
+
+    def commit(self, t: dict, by: str) -> bool:
+        self.tick(t["id"])
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", f"{t['id']}: {t['desc']} ({by})")
+        self.log("ORCH", f"{t['id']}: PASSED ({by})")
+        return True
+
+    def review(self, ms: str) -> None:
+        if self.brain_blocked:
+            self.log("ORCH", f"{ms}: review skipped (cloud unavailable)")
+            return
+        self.log("BRAIN", f"{ms}: review with {self.brain_name(BRAIN_REVIEW_MODEL)}")
+        open_before = sum(1 for t in self.tasks() if not t["done"])
+        ok, _ = self.brain(REVIEW_PROMPT.format(ms=ms), BRAIN_REVIEW_MODEL)
+        if ok:
+            self.stats["reviews"] += 1
+            self.git("add", "-A")
+            self.git("commit", "-q", "-m", f"{ms}: review (brain)")
+            added = sum(1 for t in self.tasks() if not t["done"]) - open_before
+            review = (self.root / "REVIEW.md")
+            head = review.read_text(encoding="utf-8", errors="replace")[:1200] if review.exists() else ""
+            self.notify(f"{ms} bitti, review: {added} fix görevi eklendi.\n{head}")
+        else:
+            self.notify(f"{ms} bitti, review yapılamadı (cloud).")
+
+    # --- background reviews ---------------------------------------------------------
+    # A cloud review runs in a detached git worktree of the milestone's last commit, so the hands keep editing the
+    # main tree meanwhile. Its REVIEW.md and new TASKS.md lines are merged back by the main thread between tasks
+    # (new task ids renumbered). With a local brain (mode or limit fallback) reviews stay in the foreground: they
+    # would share Strata with the hands and gain nothing.
+    def start_review(self, ms: str) -> None:
+        if self.local:
+            self.review(ms)
+            return
+        wt = Path(tempfile.mkdtemp(prefix=f"hybrid-{self.root.name}-{ms}-"))
+        wt.rmdir()                                         # git creates it
+        self.git("worktree", "add", "--detach", str(wt), "HEAD")
+        if not (wt / "TASKS.md").exists():
+            self.log("ORCH", f"{ms}: worktree failed - reviewing in the foreground")
+            self.review(ms)
+            return
+        for d in ("node_modules", ".venv"):               # share installed deps through a junction (no copy)
+            if (self.root / d).is_dir():
+                subprocess.run(["cmd", "/c", "mklink", "/J", str(wt / d), str(self.root / d)], capture_output=True)
+        base_lines = {l.strip() for l in (wt / "TASKS.md").read_text(encoding="utf-8").splitlines()}
+        self.log("BRAIN", f"{ms}: review with {BRAIN_REVIEW_MODEL} in the background - hands keep building")
+        job = self.pool.submit(self.brain, REVIEW_PROMPT.format(ms=ms), BRAIN_REVIEW_MODEL, wt)
+        self.pending[ms] = (wt, base_lines, job)
+
+    def remove_worktree(self, wt: Path) -> None:
+        for d in ("node_modules", ".venv"):
+            link = wt / d
+            if link.exists():
+                try:
+                    os.rmdir(link)                        # removes the junction only, never its target
+                except OSError as e:
+                    self.log("ORCH", f"left worktree {wt} in place: could not unlink {d} ({e})")
+                    return                                # never let git delete through a junction
+        self.git("worktree", "remove", "--force", str(wt))
+        self.git("worktree", "prune")
+
+    def harvest_reviews(self, reviewed: set, wait: bool = False) -> None:
+        for ms, (wt, base_lines, job) in list(self.pending.items()):
+            if not (wait or job.done()):
+                continue
+            del self.pending[ms]
+            try:
+                ok, _ = job.result()
+                if ok:
+                    self.merge_review(ms, wt, base_lines)
+                else:
+                    self.review_failed(ms, reviewed)
+            finally:
+                self.remove_worktree(wt)
+
+    def merge_review(self, ms: str, wt: Path, base_lines: set) -> None:
+        lines = (wt / "TASKS.md").read_text(encoding="utf-8").splitlines()
+        # new = task lines the reviewer appended (by content: its T number may clash with tasks added since)
+        new = [l.strip() for l in lines if TASK_RE.match(l.strip()) and l.strip() not in base_lines]
+        n = max([int(t["id"][1:]) for t in self.tasks()] + [0]) + 1
+        added = []
+        for line in new:
+            old_id = TASK_RE.match(line)[2]
+            added.append(line.replace(f"{old_id} |", f"T{n:02d} |", 1))
+            n += 1
+        if added:
+            path = self.root / "TASKS.md"
+            path.write_text(path.read_text(encoding="utf-8").rstrip("\n") + "\n" + "\n".join(added) + "\n",
+                            encoding="utf-8")
+        head = ""
+        if (wt / "REVIEW.md").exists():
+            review = (wt / "REVIEW.md").read_text(encoding="utf-8", errors="replace")
+            (self.root / "REVIEW.md").write_text(review, encoding="utf-8")
+            (self.state / "reviews").mkdir(exist_ok=True)
+            (self.state / "reviews" / f"{ms}.md").write_text(review, encoding="utf-8")
+            head = review[:1200]
+        self.git("add", "TASKS.md", "REVIEW.md")
+        self.git("commit", "-q", "-m", f"{ms}: review (brain)")
+        self.stats["reviews"] += 1
+        self.log("BRAIN", f"{ms}: review merged - {len(added)} fix task(s) added")
+        self.notify(f"{ms} review: {len(added)} fix görevi eklendi.\n{head}")
+
+    def review_failed(self, ms: str, reviewed: set) -> None:
+        """One retry: the milestone is un-marked and reviewed again on the next loop pass."""
+        self.review_failures[ms] = self.review_failures.get(ms, 0) + 1
+        if self.review_failures[ms] <= 1:
+            reviewed.discard(ms)
+            self.log("BRAIN", f"{ms}: review failed - will retry once")
+        else:
+            self.log("BRAIN", f"{ms}: review failed twice - skipped")
+            self.notify(f"{ms} review iki kez başarısız oldu, atlandı.")
+
+    def build(self) -> None:
+        reviewed_file = self.state / "reviewed.json"
+        reviewed = set(json.loads(reviewed_file.read_text())) if reviewed_file.exists() else set()
+
+        def review_done_milestones() -> None:
+            # Also catches milestones finished in an earlier, interrupted run.
+            all_tasks = self.tasks()
+            for ms in dict.fromkeys(t["ms"] for t in all_tasks):
+                if ms not in reviewed and ms not in self.pending and all(t["done"] for t in all_tasks if t["ms"] == ms):
+                    reviewed.add(ms)
+                    reviewed_file.write_text(json.dumps(sorted(reviewed)))
+                    self.start_review(ms)
+
+        def open_tasks() -> list[dict]:
+            out = [t for t in self.tasks() if not t["done"] and t["id"] not in self.stats["failed"]]
+            return sorted(out, key=lambda t: int(t["ms"][1:]))   # an earlier milestone's fix tasks go first
+
+        try:
+            review_done_milestones()
+            while True:
+                self.harvest_reviews(reviewed)
+                reviewed_file.write_text(json.dumps(sorted(reviewed)))
+                todo = open_tasks()
+                if not todo:
+                    if self.pending:
+                        self.log("ORCH", f"all tasks done - waiting for review(s) {sorted(self.pending)}")
+                        self.harvest_reviews(reviewed, wait=True)
+                        continue
+                    review_done_milestones()      # a failed review may have been un-marked for its retry
+                    if self.pending or open_tasks():
+                        continue
+                    break
+                self.run_task(todo[0])
+                review_done_milestones()          # a review may append fix tasks to TASKS.md; the loop picks them up
+        finally:
+            for _, _, job in self.pending.values():
+                job.cancel()
+            self.pool.shutdown(wait=True)
+            for wt, _, _ in list(self.pending.values()):
+                self.remove_worktree(wt)
+
+    def report(self, started: float) -> None:
+        self.stats["minutes"] = round((time.time() - started) / 60, 1)
+        self.stats["brain_calls"] = self.budget["brain_calls"]
+        self.stats["brain"] = "local" if self.local else "cloud"
+        (self.state / "report.json").write_text(json.dumps(self.stats, indent=1))
+        self.log("ORCH", f"done: {json.dumps(self.stats)}")
+        if self.stats["tasks"]:              # a plan-only run already notified
+            s = self.stats
+            self.notify(f"✅ bitti ({s['minutes']} dk): {s['tasks']} görev, {s['first_try']} ilk denemede, "
+                        f"{s['rescues']} rescue, başarısız: {s['failed'] or 'yok'}, "
+                        f"{'yerel' if self.local else 'cloud'} brain çağrısı: {s['brain_calls']}.")
+
+
+PLAN_PROMPT = """You are the architect. Read PROJECT_BRIEF.md.
+1. Write PLAN.md: architecture, file layout, key decisions (section "Decisions"), milestones M1..Mn.
+2. Write TASKS.md: small tasks in build order, ONE PER LINE, exactly this format:
+   - [ ] T01 | M1 | <what to build> | accept: <command that exits 0 only when the task is done>
+   Write the accept command bare (no backticks or quotes around it); it runs in cmd.exe from the project root.
+   The accept command must be a real check that runs this task's tests, in the project's own stack, e.g.
+   `.venv\\Scripts\\python -m pytest tests/test_parser.py -q` (Python) or `npx vitest run tests/car.test.js` (JS).
+   Each task's tests are written as part of that task.
+   Keep tasks small enough for a smaller model (one function/module + its tests each).
+3. Set up the skeleton only: folders, dependencies installed and a passing empty test run, .gitignore.
+   Python: `uv venv .venv` + `uv pip install --python .venv\\Scripts\\python.exe pytest ...`.
+   JS: package.json + `npm install`. Allowed shell commands: python/uv/pytest, npm install/test/run, npx vitest,
+   node, dotnet new/add/restore/build/test/ef/sln and dotnet tool restore (`dotnet tool install` is not
+   allowed: for EF, run `dotnet new tool-manifest`, add the dotnet-ef entry to .config/dotnet-tools.json yourself,
+   then `dotnet tool restore`), read-only git.
+Do NOT implement features. Be concise.
+Plan everything the brief puts In scope, including what a player/user sees, hears and feels (visual details, sound,
+HUD, feedback, recovery from stuck states), not only logic that unit tests can cover. For such a task use an accept
+command that still checks something real (build passes plus a test that the module creates/exports the thing)."""
+
+CRITIQUE_PROMPT = """You are a product critic reviewing PROJECT_BRIEF.md before anything is planned. Read it. Do not write code.
+Think about what a typical user of this kind of product expects that the brief does not say: genre conventions
+(e.g. a driving game: speedometer, engine sound, wheels, lane markings, minimap, reset when stuck), usability,
+feedback, error states, persistence, accessibility, performance feel. Also question items in "Out" that would make
+v1 feel empty, and anything In scope that is too big for the stated size.
+Write BRIEF_REVIEW.md in Turkish, max 25 lines:
+## Söylenmemiş beklentiler
+A numbered list: `N. <feature> - Öneri: v1'e dahil | sonra - <one-line reason> - maliyet: küçük|orta|büyük`
+(at most 10, most valuable first; recommend "dahil" only when it is cheap or v1 would feel broken without it).
+## Kapsam dışı bırakılanlar
+Every item from the brief's "Out" list, one line each, so the user sees what is being dropped.
+## Risk / soru
+Max 3 lines. Do not edit PROJECT_BRIEF.md."""
+
+# Change discipline below: own wording of ideas from multica-ai/andrej-karpathy-skills (Karpathy's notes on LLM coding
+# pitfalls) and DietrichGebert/ponytail (MIT, "smallest complete change"), adapted for an unattended worker: there is
+# nobody to ask, so assumptions are written down where the reviewer will see them. Added 2026-10-17.
+HANDS_PROMPT = """Do task {id}: {desc}
+Write the code and its tests for this task only; do not change other tasks' code and do not modify existing tests.
+
+How to change code:
+- Smallest complete change: everything the task needs (callers, tests, wiring into the app), nothing it does not -
+  no extra features, options, abstractions or "for later" code. If 200 lines could be 50, write 50.
+- Surgical: touch only lines this task needs. Do not reformat, rename or "improve" neighbouring code; match the
+  style around you. Remove only what your own change made unused.
+- Reuse first: a helper already in the project, then the standard library, then an installed dependency. Never add a
+  dependency for a few lines.
+- Test-first where it fits: for a fix or a rule, write the test that would fail without your change.
+- Nobody can answer questions during this run. If the task is ambiguous, choose the reading that fits PLAN.md and
+  write it as a one-line `ASSUMPTION:` comment at that spot, so the milestone review sees it.
+
+Work in as few turns as possible:
+- PLAN.md, the project's file list and the files this task names are given below - do not read them again. Read only
+  files you will edit (the Edit tool needs that) or that are missing below; read several in one turn.
+- Write the code and tests, run the accept check once: {accept}
+- If it fails, fix and run it again. When it passes, stop - no extra checks, no summary.
+{feedback}
+{context}"""
+
+RESCUE_PROMPT = """Task {id} ({desc}) failed twice in earlier attempts; start fresh and read the failure carefully. Accept check: {accept}
+Last failure:
+{feedback}
+Fix it so the accept check passes. Do not weaken or edit existing tests. Keep the change minimal."""
+
+REVIEW_PROMPT = """Review milestone {ms}: run `git log --oneline` and `git diff` against the commit before {ms} started,
+and compare with PLAN.md and PROJECT_BRIEF.md. Check every `ASSUMPTION:` comment the workers left: a wrong one is
+a bug. Write REVIEW.md (bugs, risks, missing tests, max 15 lines).
+For each real bug, append a fix task to TASKS.md in the same format (next free T number, same milestone {ms},
+with an accept command that fails today). Do not install or change dependencies (node_modules/.venv are shared).
+If an existing test encodes the wrong behaviour, name that test file's
+path in the fix task text - only then may the fix task edit it. Do not fix code yourself."""
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("project")
+    ap.add_argument("--plan-only", action="store_true")
+    ap.add_argument("--build-only", action="store_true")
+    ap.add_argument("--critique-only", action="store_true", help="write BRIEF_REVIEW.md (one brain call) and stop")
+    ap.add_argument("--critique-after", type=int, metavar="SECONDS",
+                    help="wait; if .hybrid/brief_answered does not appear, critique and notify via Telegram")
+    ap.add_argument("--brain", choices=["cloud", "local"],
+                    help="who plans/reviews/rescues: cloud = Claude (default), local = Strata; saved per project")
+    a = ap.parse_args()
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
+    root = Path(a.project).resolve()
+    if not (root / ".git").exists():
+        subprocess.run(["git", "init", "-q"], cwd=root)
+    run = Run(root, a.brain)
+    run.log("ORCH", f"brain: {'local Strata' if run.local else 'cloud Claude'}")
+    started = time.time()
+    if a.critique_after:
+        run.critique_after(a.critique_after)
+        return
+    if a.critique_only:
+        sys.exit(0 if run.critique() else 1)
+    if not a.build_only and not run.tasks():
+        if not run.plan():
+            sys.exit(1)
+    if not a.plan_only:
+        run.build()
+    run.report(started)
+
+
+if __name__ == "__main__":
+    main()

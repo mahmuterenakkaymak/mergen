@@ -1,0 +1,32 @@
+# secrets
+.env
+*.env.local
+openclaw.json
+openclaw.json.*
+
+# models and runtime data
+*.gguf
+*.gguf.partial-*
+*.safetensors
+Strata-data/
+outputs/
+
+# logs
+*.log
+setup-output*.log
+
+# python
+__pycache__/
+.venv/
+
+# SearXNG writes runtime files next to its settings
+services/searxng/*
+!services/searxng/settings.yml
+
+voice/.venv/
+
+voice/models/
+
+# machine-specific: written by scripts/01-install-strata.ps1
+config/active-model.json
+config/active-model.cmd
