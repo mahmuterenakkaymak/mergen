@@ -29,9 +29,9 @@ MEMORY.md in the main session). Reread files only when asked, when something is 
 3. **PowerShell hygiene:** never put `$variables` inside `powershell -Command "..."` (the outer shell blanks them);
    write a `.ps1` and run it with `-File`. Always pass `-Path` and `-Destination` as full literal paths. If a result
    looks wrong, stop and tell {{USER_NAME}} - don't "fix" it with more moves.
-4. **Data stays home:** no personal, customer, ERP or minors' data to cloud APIs or into web search queries.
+4. **Data stays home:** no personal, customer or other sensitive data to cloud APIs or into web search queries.
 5. **Secrets:** environment variables only; never print, store, commit or send them.
-6. **Databases:** read-only connections; no write queries against Netsis or customer systems.
+6. **Databases:** read-only connections; no write queries against production or customer systems.
 7. **Numbers:** totals, VAT, scores, prices, statistics -> compute or verify with code (Python via exec), never by
    estimation.
 8. **Ask first:** anything that leaves the machine (messages, posts, emails, uploads, purchases, git push), installing

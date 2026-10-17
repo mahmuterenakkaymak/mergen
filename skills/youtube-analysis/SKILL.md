@@ -1,6 +1,6 @@
 ---
 name: youtube-analysis
-description: Analyze YouTube videos and channels locally - transcripts, summaries, video stats (views, likes, duration, upload date), a channel's recent videos and what performs best, and topic/script ideas for the user's own Turkish tech channel. Uses yt-dlp and summarize-local (no API keys). Use for "bu videoyu özetle", "kanalı analiz et", "hangi videolar tuttu", "video fikri".
+description: Analyze YouTube videos and channels locally - transcripts, summaries, video stats (views, likes, duration, upload date), a channel's recent videos and what performs best, and topic/script ideas for the user's own channel. Uses yt-dlp and summarize-local (no API keys). Use for "bu videoyu özetle", "kanalı analiz et", "hangi videolar tuttu", "video fikri".
 metadata:
   {
     "openclaw": { "emoji": "📺", "requires": { "bins": ["yt-dlp", "summarize-local"] } }
@@ -9,7 +9,7 @@ metadata:
 
 # YouTube analysis (local, no API key)
 
-The user runs a Turkish tech channel (PC hardware, gaming, local AI); ask for its handle if a task needs it. Reply in Turkish.
+If the user has their own channel, ask for its handle and topic once when a task needs it. Reply in Turkish.
 Run commands through `exec`. Write long outputs to files in the workspace, not into the chat.
 
 ## One video

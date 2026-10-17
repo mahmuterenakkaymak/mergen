@@ -45,7 +45,7 @@ Never drop something silently: every feature you leave out goes into "Out" and i
 
 ## User defaults (apply unless told otherwise)
 
-- Local-first: no customer/ERP/personal data to cloud APIs; flag any cloud dependency.
+- Local-first: no customer/personal/sensitive data to cloud APIs; flag any cloud dependency.
 - Secrets only in environment variables; `.env` in `.gitignore`.
 - Read-only connections to production databases; own data in a separate schema/DB.
 - Numbers (totals, VAT, scores) computed deterministically in code/SQL, never by the LLM.
