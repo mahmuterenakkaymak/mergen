@@ -29,6 +29,26 @@ spending as little of the Claude Pro plan as possible.
 returns a usage-limit error the orchestrator does not retry: reviews fall back to the local model and rescues wait
 for the limit to reset.
 
+## Brain mode: cloud or fully local
+
+The same pipeline runs in two modes:
+
+| | Hybrid (default) | Fully local |
+|---|---|---|
+| Plan, reviews, rescues | Claude (Opus plans, Sonnet reviews) | the local Strata model |
+| Code, tests, fixes | local Strata model | local Strata model |
+| Cloud calls | ~3-10 per project | none - nothing leaves the PC |
+| Needs | a Claude account, logged in | only Strata |
+| Use when | you want the strongest plan and review | private or customer data, no Claude account, or the limit is used up |
+
+Say *"tam local"* (or "cloud kullanma", "Claude'suz") in the panel, or start the orchestrator with `--brain local`.
+The choice is saved in `.hybrid/mode.json`, so resumed runs keep it. Hybrid runs also switch to the local brain on
+their own when Claude's usage limit or the cloud budget runs out, and say so on Telegram.
+
+Honest status: every build in [hybrid-results.md](hybrid-results.md) used the hybrid mode. Fully local mode is
+implemented and used by the limit fallback, but no complete fully local build has been measured yet; expect slower
+plans and weaker reviews than Claude's.
+
 ## How to use
 
 1. Agent mode on (MERGEN shortcut).

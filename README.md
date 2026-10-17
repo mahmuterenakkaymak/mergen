@@ -20,7 +20,8 @@
 > sistem RAM'i üzerinde 256K bağlamla çalışır; [OpenClaw](https://docs.openclaw.ai) ajanı yürütür. Sesli komut
 > ("Mergen, ..."), Telegram, web araması (yerel SearXNG), dosya ve uygulama yönetimi, araştırma ve YouTube analizi
 > yapabilir. "Bana X yap" dediğinizde hibrit hat devreye girer: Claude planlar ve inceler, yerel model kodu yazar ve test
-> eder, deterministik bir Python orkestratörü döngüyü yönetir. Silme ve taşıma gibi işlemler her zaman onay ister;
+> eder, deterministik bir Python orkestratörü döngüyü yönetir. "Tam local" derseniz planlama ve inceleme de yerel
+> modelde yapılır, hiçbir şey buluta gitmez. Silme ve taşıma gibi işlemler her zaman onay ister;
 > kişisel veri buluta gönderilmez. Gerçek sonuçlar (başarısızlıklar dahil) [docs/hybrid-results.md](docs/hybrid-results.md)'de.
 
 <p align="center">
@@ -39,6 +40,8 @@
 - **A software pipeline that is honest about itself.** Ask for a program and a deterministic orchestrator runs it:
   Claude plans and reviews, the local model writes every task and its tests, nothing is committed unless its test
   passes. See [what really happened](docs/hybrid-results.md) on five builds.
+- **Hybrid or fully local - your call.** Say *"tam local"* and the local model also plans, reviews and rescues: no
+  Claude account, no cloud calls, nothing leaves the PC ([modes](docs/hybrid-dev.md#brain-mode-cloud-or-fully-local)).
 - **One GPU, three modes.** A 93 GB model runs on a 32 GB card by keeping the hot experts in VRAM and the rest in
   system RAM. Switch the card between the agent, a creative 27B model + ComfyUI, or nothing (gaming) in one click.
 
@@ -69,7 +72,8 @@ flowchart LR
 ```
 
 Everything binds to `127.0.0.1`. The only cloud calls are the hybrid pipeline's planning and reviews (and they fall back
-to the local model when the Claude limit is reached). Web search sends only the query, through your own SearXNG.
+to the local model when the Claude limit is reached); in fully local mode there are none. Web search sends only the
+query, through your own SearXNG.
 
 ## The hybrid pipeline
 
@@ -95,6 +99,10 @@ reviews run in parallel with the build, and every milestone, rescue, failure and
 Workers follow a short change discipline (smallest complete change, touch only what the task needs, reuse before
 writing, test-first for fixes) and, since nobody can answer questions at 3 a.m., leave `ASSUMPTION:` notes that the
 review checks. Python, JavaScript/TypeScript and .NET projects are supported.
+
+**Two modes, one pipeline.** *Hybrid* (default): Claude is the brain, the local model the hands. *Fully local*
+(`--brain local`, or just say *"tam local"*): Strata is both, for private data or when you have no Claude account.
+All results below are hybrid runs; a fully local build has not been measured yet.
 
 **Results so far** ([details](docs/hybrid-results.md)):
 
@@ -138,13 +146,26 @@ Measured on the setup below with `scripts/bench_strata.py` (median of 3, [detail
 
 ## Quick start
 
+### Let your AI set it up
+
+Using an AI coding assistant (Claude Code, Cursor, Codex, GitHub Copilot, ...)? Paste this into it:
+
+```text
+Set up MERGEN on this PC for me: https://github.com/mahmuterenakkaymak/mergen - follow docs/AI_SETUP.md in that repository.
+```
+
+It checks your GPU, RAM, disk and page file, picks the model build that fits, installs Strata and OpenClaw, verifies
+them, and asks you before anything it should not decide alone (system settings, the download size, your tokens).
+
+### Or do it yourself
+
 PowerShell, in order. Every script has its settings at the top.
 
 ```powershell
 # 0. once: a fixed 64 GB page file on C:, then reboot (docs/known-issues.md)
 
-# 1. Strata + a Qwen3.8-Flash-Next build: a menu shows every build with a pick for your RAM
-.\scripts\01-install-strata.ps1                  # or: -Model IQ3_S / UD-IQ4_XS / IQ2_XS / CODER ...
+# 1. Strata + a Qwen3.8-Flash-Next build: pick it with the arrow keys + Enter (the one for your RAM is preselected)
+.\scripts\01-install-strata.ps1                  # or no menu: -Model IQ3_S / UD-IQ4_XS / IQ2_XS / CODER ...
 
 # 2. OpenClaw (pinned) + the gateway service
 .\scripts\02-install-openclaw.ps1

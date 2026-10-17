@@ -35,19 +35,69 @@ $Catalog = @(
 $ramGB = [math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB)
 $recommended = if ($ramGB -ge 90) { "UD-IQ4_XS" } elseif ($ramGB -ge 44) { "IQ2_XS" } else { "CODER" }
 
-if (-not $Model) {
-    Write-Host "`nQwen3.8-Flash-Next builds Strata can run (your RAM: $ramGB GB):`n"
-    for ($i = 0; $i -lt $Catalog.Count; $i++) {
-        $c = $Catalog[$i]
-        $mark = if ($c.Model -eq $recommended) { " <- recommended" } elseif ($c.MinRamGB -gt $ramGB) { " (needs more RAM)" } else { "" }
-        "{0,2}. {1,-14} {2,-8} {3}{4}" -f ($i + 1), $c.Model, $c.Family, $c.Note, $mark | Write-Host
+function Format-Build($c) {
+    $mark = if ($c.Model -eq $recommended) { "  <- recommended" } elseif ($c.MinRamGB -gt $ramGB) { "  (needs $($c.MinRamGB) GB)" } else { "" }
+    "{0,-14} {1,-8} {2}{3}" -f $c.Model, $c.Family, $c.Note, $mark
+}
+
+# Arrow-key menu: Up/Down (Home/End) to move, Enter to install, Esc to quit. Falls back to typing a number
+# when there is no interactive console (redirected input, ISE, an AI agent's shell).
+function Select-Build {
+    $index = [array]::IndexOf($Catalog.Model, $recommended)
+    $interactive = -not [Console]::IsInputRedirected -and -not [Console]::IsOutputRedirected -and $Host.Name -eq "ConsoleHost"
+    if (-not $interactive) {
+        Write-Host "`nQwen3.8-Flash-Next builds Strata can run (your RAM: $ramGB GB):`n"
+        for ($i = 0; $i -lt $Catalog.Count; $i++) { Write-Host ("{0,2}. {1}" -f ($i + 1), (Format-Build $Catalog[$i])) }
+        $answer = Read-Host "`nNumber or name [Enter = $recommended]"
+        if (-not $answer) { return $recommended }
+        if ($answer -match '^\d+$' -and [int]$answer -ge 1 -and [int]$answer -le $Catalog.Count) { return $Catalog[[int]$answer - 1].Model }
+        return $answer
     }
-    $answer = Read-Host "`nNumber or name [Enter = $recommended]"
-    $Model = if (-not $answer) { $recommended } elseif ($answer -match '^\d+$') { $Catalog[[int]$answer - 1].Model } else { $answer }
+    Write-Host "`nQwen3.8-Flash-Next builds Strata can run (your RAM: $ramGB GB)."
+    Write-Host "Up/Down to choose, Enter to install, Esc to quit.`n"
+    # One console row per build (cut to the window width), or the in-place redraw lands on the wrong rows.
+    $width = [Console]::WindowWidth - 1
+    $rows = foreach ($c in $Catalog) { $l = Format-Build $c; if ($l.Length -gt $width - 2) { $l = $l.Substring(0, $width - 5) + "..." }; $l }
+    # Print once, then redraw in place. The top row is read after printing: at the bottom of the window,
+    # printing scrolls the buffer.
+    foreach ($r in $rows) { Write-Host "" }
+    $top = [Console]::CursorTop - $Catalog.Count
+    $cursorWas = [Console]::CursorVisible
+    [Console]::CursorVisible = $false
+    try {
+        while ($true) {
+            for ($i = 0; $i -lt $Catalog.Count; $i++) {
+                [Console]::SetCursorPosition(0, $top + $i)
+                $color = if ($i -eq $index) { "Cyan" } elseif ($Catalog[$i].MinRamGB -gt $ramGB) { "DarkGray" } else { "Gray" }
+                $prefix = if ($i -eq $index) { "> " } else { "  " }
+                Write-Host ($prefix + $rows[$i]).PadRight($width) -ForegroundColor $color -NoNewline
+            }
+            switch ([Console]::ReadKey($true).Key) {
+                "UpArrow"   { $index = ($index - 1 + $Catalog.Count) % $Catalog.Count }
+                "DownArrow" { $index = ($index + 1) % $Catalog.Count }
+                "Home"      { $index = 0 }
+                "End"       { $index = $Catalog.Count - 1 }
+                "Enter"     { return $Catalog[$index].Model }
+                "Escape"    { return "" }
+            }
+        }
+    } finally {
+        [Console]::CursorVisible = $cursorWas
+        [Console]::SetCursorPosition(0, $top + $Catalog.Count)
+        Write-Host ""
+    }
+}
+
+if (-not $Model) {
+    $Model = Select-Build
+    if (-not $Model) { Write-Host "Cancelled, nothing installed."; exit 1 }
 }
 # Invariant case: on a Turkish Windows "iq4".ToUpper() is "İQ4" (dotted I) and "IQ4".ToLower() is "ıq4".
 $pick = $Catalog | Where-Object { $_.Model -eq $Model.ToUpperInvariant() } | Select-Object -First 1
 if (-not $pick) { throw "Unknown model '$Model'. Choose one of: $($Catalog.Model -join ', ')" }
+if ($pick.MinRamGB -gt $ramGB) {
+    Write-Warning "$($pick.Model) needs about $($pick.MinRamGB) GB of RAM + VRAM and this PC has $ramGB GB of RAM: it may load very slowly or not at all."
+}
 # Strata's --model value: swift sizes drop the SWIFT- prefix; the Coder has a single size (setup picks it)
 $strataModel = switch ($pick.Family) { "swift" { $pick.Model -replace '^SWIFT-', '' } "coder" { "" } default { $pick.Model } }
 Write-Host "`nInstalling $($pick.Model) ($($pick.Family)) with $($Context / 1024)K context..."
