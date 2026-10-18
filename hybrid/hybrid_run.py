@@ -102,6 +102,7 @@ MESSAGES = {
         "review_skipped": "{ms} bitti, review yapılamadı (cloud).",
         "bg_review_fixes": "{ms} review: {n} fix görevi eklendi.\n{head}",
         "bg_review_failed": "{ms} review iki kez başarısız oldu, atlandı.",
+        "memory_note": "🧠 {who} memory'ye not yazdı ({name}): {desc}",
         "done": "✅ bitti ({minutes} dk): {tasks} görev, {first_try} ilk denemede, {rescues} rescue, "
                 "başarısız: {failed}, {where} brain çağrısı: {calls}.",
         "none": "yok", "local": "yerel", "cloud": "cloud",
@@ -118,6 +119,7 @@ MESSAGES = {
         "review_skipped": "{ms} done, the review could not run (cloud).",
         "bg_review_fixes": "{ms} review: {n} fix tasks added.\n{head}",
         "bg_review_failed": "{ms} review failed twice, skipped.",
+        "memory_note": "🧠 {who} saved a memory note ({name}): {desc}",
         "done": "✅ done ({minutes} min): {tasks} tasks, {first_try} first try, {rescues} rescues, "
                 "failed: {failed}, {where} brain calls: {calls}.",
         "none": "none", "local": "local", "cloud": "cloud",
@@ -264,8 +266,32 @@ class Run:
             return self.brain(prompt, model, cwd)   # retry the same job locally
         return ok, out
 
+    def memory_dir(self) -> Path:
+        # Claude Code keeps per-project auto-memory under ~/.claude/projects/<path with non-alphanumerics as "-">.
+        return Path.home() / ".claude" / "projects" / re.sub(r"[^A-Za-z0-9]", "-", str(self.root.resolve())) / "memory"
+
+    def memory_snapshot(self) -> dict[str, float]:
+        d = self.memory_dir()
+        return {f.name: f.stat().st_mtime for f in d.glob("*.md") if f.name != "MEMORY.md"} if d.exists() else {}
+
+    def report_memory(self, before: dict[str, float], who: str) -> None:
+        """Agents save what they learn to project memory - in one run the workers diagnosed an orchestrator bug and
+        recorded the one-line fix there hours before anyone read it. Surface every new or changed note."""
+        for name, mtime in self.memory_snapshot().items():
+            if before.get(name) == mtime:
+                continue
+            text = (self.memory_dir() / name).read_text(encoding="utf-8", errors="replace")
+            desc = next((l.split(":", 1)[1].strip().strip('"') for l in text.splitlines()
+                         if l.startswith("description:")), "")
+            kind = "changed" if name in before else "new"
+            self.log("ORCH", f"{who}: {kind} memory note {name} - {desc}")
+            self.notify(msg("memory_note", who=who, name=name, desc=desc[:300]))
+
     def hands(self, prompt: str) -> tuple[bool, str]:
-        return self.agent("hands", prompt, env=HANDS_ENV)
+        mem = self.memory_snapshot()
+        out = self.agent("hands", prompt, env=HANDS_ENV)
+        self.report_memory(mem, "hands")
+        return out
 
     # --- git / checks -----------------------------------------------------------
     def git(self, *args: str) -> str:
@@ -426,7 +452,11 @@ class Run:
         feedback = ""
         for attempt in range(1, MAX_TRIES_LOCAL + 1):
             self.log("HANDS", f"{t['id']} try {attempt}: {t['desc']}")
-            self.hands(HANDS_PROMPT.format(**t, feedback=feedback, context=self.task_context(t)))
+            # The worker's shell is Git Bash, which eats backslashes (.venv\Scripts\python -> .venvScriptspython,
+            # exit 127). A worker once read that as "no shell" and saved it to memory, so later workers stopped
+            # running their accept checks. The orchestrator still runs the original command in cmd.exe.
+            self.hands(HANDS_PROMPT.format(**{**t, "accept": t["accept"].replace("\\", "/")}, feedback=feedback,
+                                           context=self.task_context(t)))
             tampered = self.changed_tests(before, allowed=t["desc"])
             if tampered:
                 files = sorted({k.split("::")[0] for k in tampered})
@@ -448,7 +478,9 @@ class Run:
         for _ in range(MAX_RESCUES_PER_TASK):
             self.log("BRAIN", f"{t['id']}: rescue with {self.brain_name(BRAIN_REVIEW_MODEL)}")
             self.notify(msg("rescue", id=t["id"], tries=MAX_TRIES_LOCAL, brain=self.brain_name(BRAIN_REVIEW_MODEL)))
+            mem = self.memory_snapshot()
             ok, out = self.brain(RESCUE_PROMPT.format(**t, feedback=feedback), BRAIN_REVIEW_MODEL)
+            self.report_memory(mem, "rescue")
             if not ok:
                 break
             self.stats["rescues"] += 1
@@ -681,6 +713,9 @@ How to change code:
 Work in as few turns as possible:
 - PLAN.md, the project's file list and the files this task names are given below - do not read them again. Read only
   files you will edit (the Edit tool needs that) or that are missing below; read several in one turn.
+- Your shell is bash: use forward slashes in paths. Allowed commands: the project's python/pytest/uv, dotnet
+  build/test/new/add/restore, npm install/test/run, npx vitest, node, read-only git. Anything else is denied by
+  design (not a broken shell) - do not retry it, and do not save "the shell is blocked" to memory.
 - Write the code and tests, run the accept check once: {accept}
 - If it fails, fix and run it again. When it passes, stop - no extra checks, no summary.
 {feedback}
