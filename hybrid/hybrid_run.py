@@ -77,6 +77,59 @@ ALLOWED_TOOLS = ",".join([
 # Sent by this script through OpenClaw's Telegram channel - no LLM turn, so no load on the GPU the hands are using.
 # MERGEN cannot poll the log by itself (it only runs when spoken to). Empty target disables notifications.
 NOTIFY_TELEGRAM_TARGET = os.environ.get("HYBRID_NOTIFY_TELEGRAM", "")   # your paired Telegram chat id
+# Language of the notifications (Turkish or English) and of BRIEF_REVIEW.md: MERGEN's language from
+# config/language.json (03-configure-openclaw.ps1); HYBRID_LANG=tr|en overrides the notifications.
+def _mergen_language() -> str:
+    try:
+        cfg = Path(__file__).resolve().parent.parent / "config" / "language.json"
+        return json.loads(cfg.read_text(encoding="utf-8-sig")).get("language") or "Turkish"
+    except (OSError, ValueError):
+        return "Turkish"
+
+
+LANGUAGE_NAME = _mergen_language()
+NOTIFY_LANG = os.environ.get("HYBRID_LANG") or ("tr" if LANGUAGE_NAME == "Turkish" else "en")
+MESSAGES = {
+    "tr": {
+        "fallback": "{why}: run durmadı, bundan sonra plan/review/rescue local Strata'da (tam local).",
+        "critique": "{minutes} dk cevap gelmedi, brief'i {brain} eleştirdi. MERGEN'e hangilerini ekleyeceğini yaz:\n{text}",
+        "critique_failed": "brief eleştirisi başarısız - MERGEN'e 'Claude'a sor' yazarak tekrar deneyebilirsin.",
+        "plan_failed": "plan BAŞARISIZ: {out}",
+        "plan_ready": "plan hazır: {n} görev. MERGEN'e onay ver, build başlasın.",
+        "rescue": "{id} yerel modelde {tries} kez geçmedi, {brain} kurtarıyor.",
+        "task_failed": "❌ {id} BAŞARISIZ, açık bırakıldı: {desc}",
+        "review_fixes": "{ms} bitti, review: {n} fix görevi eklendi.\n{head}",
+        "review_skipped": "{ms} bitti, review yapılamadı (cloud).",
+        "bg_review_fixes": "{ms} review: {n} fix görevi eklendi.\n{head}",
+        "bg_review_failed": "{ms} review iki kez başarısız oldu, atlandı.",
+        "done": "✅ bitti ({minutes} dk): {tasks} görev, {first_try} ilk denemede, {rescues} rescue, "
+                "başarısız: {failed}, {where} brain çağrısı: {calls}.",
+        "none": "yok", "local": "yerel", "cloud": "cloud",
+    },
+    "en": {
+        "fallback": "{why}: the run goes on; plan/review/rescue now run on local Strata (fully local).",
+        "critique": "No answer for {minutes} min, so {brain} reviewed the brief. Tell MERGEN which ones to add:\n{text}",
+        "critique_failed": "brief review failed - tell MERGEN \"ask Claude\" to try again.",
+        "plan_failed": "plan FAILED: {out}",
+        "plan_ready": "plan ready: {n} tasks. Approve it in MERGEN to start the build.",
+        "rescue": "{id} failed {tries} times on the local model, {brain} is rescuing it.",
+        "task_failed": "❌ {id} FAILED, left open: {desc}",
+        "review_fixes": "{ms} done, review: {n} fix tasks added.\n{head}",
+        "review_skipped": "{ms} done, the review could not run (cloud).",
+        "bg_review_fixes": "{ms} review: {n} fix tasks added.\n{head}",
+        "bg_review_failed": "{ms} review failed twice, skipped.",
+        "done": "✅ done ({minutes} min): {tasks} tasks, {first_try} first try, {rescues} rescues, "
+                "failed: {failed}, {where} brain calls: {calls}.",
+        "none": "none", "local": "local", "cloud": "cloud",
+    },
+}
+
+
+def msg(key: str, **values) -> str:
+    table = MESSAGES.get(NOTIFY_LANG, MESSAGES["en"])
+    return table[key].format(**values)
+
+
 # node + entry script: openclaw.cmd re-parses arguments through cmd.exe and mangles them
 OPENCLAW_ENTRY = os.environ.get("OPENCLAW_ENTRY") or str(
     Path(shutil.which("openclaw") or "openclaw").resolve().parent / "node_modules" / "openclaw" / "openclaw.mjs")
@@ -192,7 +245,7 @@ class Run:
                 return
             self.local = True
         self.log("BRAIN", f"{why} - local Strata is the brain for the rest of this run")
-        self.notify(f"{why}: run durmadı, bundan sonra plan/review/rescue local Strata'da (tam local).")
+        self.notify(msg("fallback", why=why))
 
     def brain(self, prompt: str, model: str, cwd: Path | None = None) -> tuple[bool, str]:
         with self.lock:
@@ -251,8 +304,8 @@ class Run:
                 continue
             if rel not in now:
                 now[rel] = test_functions(rel, cur) if cur is not None else {}
-            # test_functions() keys are "file::name" - look up the full key. Using `name` alone (2026-10-16 to
-            # 10-18) flagged every existing Python test as changed: kazanim-koc ran 0/45 first try, all rescues.
+            # test_functions() keys are "file::name" - look up the full key. Using `name` alone flagged every
+            # existing Python test as changed, so every task of a Python project went to rescue.
             if now[rel].get(key) != old:
                 out.append(key)
         return sorted(out)
@@ -320,10 +373,9 @@ class Run:
         self.log("ORCH", f"no answer in {seconds} s - asking the critic")
         if self.critique():
             text = (self.root / "BRIEF_REVIEW.md").read_text(encoding="utf-8", errors="replace")
-            self.notify(f"{seconds // 60} dk cevap gelmedi, brief'i {self.brain_name(BRAIN_PLAN_MODEL)} eleştirdi. "
-                        f"MERGEN'e hangilerini ekleyeceğini yaz:\n{text[:2500]}")
+            self.notify(msg("critique", minutes=seconds // 60, brain=self.brain_name(BRAIN_PLAN_MODEL), text=text[:2500]))
         else:
-            self.notify("brief eleştirisi başarısız - MERGEN'e 'Claude'a sor' yazarak tekrar deneyebilirsin.")
+            self.notify(msg("critique_failed"))
 
     def plan(self) -> bool:
         if not (self.root / "PROJECT_BRIEF.md").exists():
@@ -335,9 +387,9 @@ class Run:
         self.log("BRAIN", f"plan {'done' if ok and n else 'FAILED'}: {n} tasks")
         if not (ok and n):
             self.log("BRAIN", out[-800:])
-            self.notify(f"plan BAŞARISIZ: {out[-300:]}")
+            self.notify(msg("plan_failed", out=out[-300:]))
             return False
-        self.notify(f"plan hazır: {n} görev. MERGEN'e onay ver, build başlasın.")
+        self.notify(msg("plan_ready", n=n))
         self.git("add", "-A")
         self.git("commit", "-q", "-m", "Plan: PLAN.md and TASKS.md (brain)")
         return True
@@ -395,7 +447,7 @@ class Run:
         # rescue
         for _ in range(MAX_RESCUES_PER_TASK):
             self.log("BRAIN", f"{t['id']}: rescue with {self.brain_name(BRAIN_REVIEW_MODEL)}")
-            self.notify(f"{t['id']} yerel modelde {MAX_TRIES_LOCAL} kez geçmedi, {self.brain_name(BRAIN_REVIEW_MODEL)} kurtarıyor.")
+            self.notify(msg("rescue", id=t["id"], tries=MAX_TRIES_LOCAL, brain=self.brain_name(BRAIN_REVIEW_MODEL)))
             ok, out = self.brain(RESCUE_PROMPT.format(**t, feedback=feedback), BRAIN_REVIEW_MODEL)
             if not ok:
                 break
@@ -405,7 +457,7 @@ class Run:
                 return self.commit(t, "brain")
             feedback = out
         self.log("ORCH", f"{t['id']}: FAILED - left open")
-        self.notify(f"❌ {t['id']} BAŞARISIZ, açık bırakıldı: {t['desc'][:150]}")
+        self.notify(msg("task_failed", id=t["id"], desc=t["desc"][:150]))
         self.stats["failed"].append(t["id"])
         return False
 
@@ -430,9 +482,9 @@ class Run:
             added = sum(1 for t in self.tasks() if not t["done"]) - open_before
             review = (self.root / "REVIEW.md")
             head = review.read_text(encoding="utf-8", errors="replace")[:1200] if review.exists() else ""
-            self.notify(f"{ms} bitti, review: {added} fix görevi eklendi.\n{head}")
+            self.notify(msg("review_fixes", ms=ms, n=added, head=head))
         else:
-            self.notify(f"{ms} bitti, review yapılamadı (cloud).")
+            self.notify(msg("review_skipped", ms=ms))
 
     # --- background reviews ---------------------------------------------------------
     # A cloud review runs in a detached git worktree of the milestone's last commit, so the hands keep editing the
@@ -509,7 +561,7 @@ class Run:
         self.git("commit", "-q", "-m", f"{ms}: review (brain)")
         self.stats["reviews"] += 1
         self.log("BRAIN", f"{ms}: review merged - {len(added)} fix task(s) added")
-        self.notify(f"{ms} review: {len(added)} fix görevi eklendi.\n{head}")
+        self.notify(msg("bg_review_fixes", ms=ms, n=len(added), head=head))
 
     def review_failed(self, ms: str, reviewed: set) -> None:
         """One retry: the milestone is un-marked and reviewed again on the next loop pass."""
@@ -519,7 +571,7 @@ class Run:
             self.log("BRAIN", f"{ms}: review failed - will retry once")
         else:
             self.log("BRAIN", f"{ms}: review failed twice - skipped")
-            self.notify(f"{ms} review iki kez başarısız oldu, atlandı.")
+            self.notify(msg("bg_review_failed", ms=ms))
 
     def build(self) -> None:
         reviewed_file = self.state / "reviewed.json"
@@ -570,9 +622,9 @@ class Run:
         self.log("ORCH", f"done: {json.dumps(self.stats)}")
         if self.stats["tasks"]:              # a plan-only run already notified
             s = self.stats
-            self.notify(f"✅ bitti ({s['minutes']} dk): {s['tasks']} görev, {s['first_try']} ilk denemede, "
-                        f"{s['rescues']} rescue, başarısız: {s['failed'] or 'yok'}, "
-                        f"{'yerel' if self.local else 'cloud'} brain çağrısı: {s['brain_calls']}.")
+            self.notify(msg("done", minutes=s["minutes"], tasks=s["tasks"], first_try=s["first_try"], rescues=s["rescues"],
+                        failed=s["failed"] or msg("none"), where=msg("local" if self.local else "cloud"),
+                        calls=s["brain_calls"]))
 
 
 PLAN_PROMPT = """You are the architect. Read PROJECT_BRIEF.md.
@@ -600,14 +652,14 @@ Think about what a typical user of this kind of product expects that the brief d
 (e.g. a driving game: speedometer, engine sound, wheels, lane markings, minimap, reset when stuck), usability,
 feedback, error states, persistence, accessibility, performance feel. Also question items in "Out" that would make
 v1 feel empty, and anything In scope that is too big for the stated size.
-Write BRIEF_REVIEW.md in Turkish, max 25 lines:
-## Söylenmemiş beklentiler
-A numbered list: `N. <feature> - Öneri: v1'e dahil | sonra - <one-line reason> - maliyet: küçük|orta|büyük`
-(at most 10, most valuable first; recommend "dahil" only when it is cheap or v1 would feel broken without it).
-## Kapsam dışı bırakılanlar
+Write BRIEF_REVIEW.md in {language}, headings included, max 25 lines:
+## Unstated expectations
+A numbered list: `N. <feature> - suggest: v1 | later - <one-line reason> - cost: small|medium|large`
+(at most 10, most valuable first; suggest "v1" only when it is cheap or v1 would feel broken without it).
+## Left out of scope
 Every item from the brief's "Out" list, one line each, so the user sees what is being dropped.
-## Risk / soru
-Max 3 lines. Do not edit PROJECT_BRIEF.md."""
+## Risks / questions
+Max 3 lines. Do not edit PROJECT_BRIEF.md.""".replace("{language}", LANGUAGE_NAME)
 
 # Change discipline below: own wording of ideas from multica-ai/andrej-karpathy-skills (Karpathy's notes on LLM coding
 # pitfalls) and DietrichGebert/ponytail (MIT, "smallest complete change"), adapted for an unattended worker: there is
