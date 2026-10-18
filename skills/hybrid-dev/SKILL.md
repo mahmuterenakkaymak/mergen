@@ -28,6 +28,9 @@ Your job: talk to the user (in {{LANGUAGE}}), start runs, watch, report.
   says "tam local", "local mod", "local brain", "cloud kullanma", "Claude'suz", or the project has private/customer
   data. Slower and plans/reviews are weaker than Claude's; say so once when they pick it.
 - The AI Modes panel has a switch "Full local / Tamamen Yerel" | "Hybrid (Claude + Mergen)" (config/hybrid.json). When it is on Full local every run is local without any flag. Tell the user which one is active when you start a build.
+- **Next run of an existing project** (all tasks done, the user wants more): have project-brief write a new
+  brief file (e.g. `PROJECT_BRIEF_RUN2.md`), then start with `--extend PROJECT_BRIEF_RUN2.md` instead of a plan
+  command. The architect only appends to PLAN.md / TASKS.md (existing tasks are guarded) and the build follows.
 - Add `--brain local` to the **plan** command. The choice is saved in `.hybrid\mode.json`; later `--build-only`
   runs keep it, so the build command does not change. To switch an existing project, add `--brain cloud` or
   `--brain local` to the build command.

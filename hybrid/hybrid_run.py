@@ -109,6 +109,8 @@ MESSAGES = {
         "critique_failed": "brief eleştirisi başarısız - MERGEN'e 'Claude'a sor' yazarak tekrar deneyebilirsin.",
         "plan_failed": "plan BAŞARISIZ: {out}",
         "plan_ready": "plan hazır: {n} görev. MERGEN'e onay ver, build başlasın.",
+        "extend_failed": "plan (devam) BAŞARISIZ: {out}",
+        "extend_ready": "plan (devam) hazır: {n} yeni görev ({brief}), build başlıyor.",
         "rescue": "{id} yerel modelde {tries} kez geçmedi, {brain} kurtarıyor.",
         "task_failed": "❌ {id} BAŞARISIZ, açık bırakıldı: {desc}",
         "review_fixes": "{ms} bitti, review: {n} fix görevi eklendi.\n{head}",
@@ -129,6 +131,8 @@ MESSAGES = {
         "critique_failed": "brief review failed - tell MERGEN \"ask Claude\" to try again.",
         "plan_failed": "plan FAILED: {out}",
         "plan_ready": "plan ready: {n} tasks. Approve it in MERGEN to start the build.",
+        "extend_failed": "plan (next run) FAILED: {out}",
+        "extend_ready": "plan (next run) ready: {n} new tasks ({brief}), build starting.",
         "rescue": "{id} failed {tries} times on the local model, {brain} is rescuing it.",
         "task_failed": "❌ {id} FAILED, left open: {desc}",
         "review_fixes": "{ms} done, review: {n} fix tasks added.\n{head}",
@@ -452,6 +456,37 @@ class Run:
         self.notify(msg("plan_ready", n=n))
         self.git("add", "-A")
         self.git("commit", "-q", "-m", "Plan: PLAN.md and TASKS.md (brain)")
+        return True
+
+    def extend(self, brief: str) -> bool:
+        """Next run of an existing project (added 2026-10-18): the plan call must keep every done
+        task and the existing PLAN.md, and only append. Checked deterministically - a plan that rewrote or dropped
+        an existing task line is rolled back."""
+        if not (self.root / brief).exists():
+            self.log("ORCH", f"{brief} missing")
+            return False
+        tasks_file = self.root / "TASKS.md"
+        before = [l.strip() for l in tasks_file.read_text(encoding="utf-8").splitlines() if TASK_RE.match(l.strip())]
+        last = max(int(TASK_RE.match(l)[2][1:]) for l in before)
+        last_ms = max(int(TASK_RE.match(l)[3][1:]) for l in before)
+        self.log("BRAIN", f"extending the plan from {brief} with {self.brain_name(BRAIN_PLAN_MODEL)}")
+        ok, out = self.brain(EXTEND_PROMPT.format(brief=brief, next_t=last + 1, next_ms=last_ms + 1),
+                             BRAIN_PLAN_MODEL)
+        now = {l.strip() for l in tasks_file.read_text(encoding="utf-8").splitlines() if TASK_RE.match(l.strip())}
+        lost = [l for l in before if l not in now]
+        added = len(self.tasks()) - len(before)
+        if lost:
+            self.log("ORCH", f"extend rewrote {len(lost)} existing task line(s) - rolled back: {lost[:2]}")
+            self.git("checkout", "HEAD", "--", "TASKS.md", "PLAN.md")
+            ok = False
+        self.log("BRAIN", f"extend {'done' if ok and added > 0 else 'FAILED'}: {added} new tasks")
+        if not (ok and added > 0):
+            self.log("BRAIN", out[-800:])
+            self.notify(msg("extend_failed", out=out[-300:]))
+            return False
+        self.notify(msg("extend_ready", n=added, brief=brief))
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", f"Plan: extend PLAN.md and TASKS.md from {brief} (brain)")
         return True
 
     def task_context(self, t: dict) -> str:
@@ -820,6 +855,23 @@ most serious first, append a fix task to TASKS.md in the same format (next free 
 command is a real check that fails today (build + a page test for the structural cause, e.g. the chart renders a
 legend, no element is wider than the phone screen). Do not fix code yourself."""
 
+EXTEND_PROMPT = """You are the architect. This project already exists and works: read PLAN.md, TASKS.md (all done),
+the code and tests. Read {brief} - the brief for the next run.
+1. APPEND to PLAN.md a new section for this run (architecture changes, file layout additions, decisions, milestones).
+   Do not rewrite or delete existing sections; where an old decision changes, say so in the new section.
+2. APPEND new tasks to TASKS.md, continuing the numbering at T{next_t:02d} and the milestones at M{next_ms} (use the
+   milestone numbers the brief gives if they start there). Never edit an existing task line. ONE PER LINE, format:
+   - [ ] T{next_t:02d} | M{next_ms} | <what to build> | accept: <command that exits 0 only when the task is done>
+   Accept commands bare (no backticks), run in cmd.exe from the project root, real checks in the project's stack
+   that run this task's tests. Keep tasks small enough for a smaller model (one function/module + its tests each).
+   Each milestone ends with a task whose accept runs the whole test suite.
+3. Install new dependencies the brief needs (Python: `uv pip install --python .venv\\Scripts\\python.exe ...`, and
+   record them in pyproject.toml; .NET: only packages the brief allows). Allowed shell commands: python/uv/pytest,
+   npm install/test/run, npx vitest, node, dotnet new/add/restore/build/test/ef/sln, dotnet tool restore,
+   read-only git.
+Do NOT implement features. Plan everything the brief puts In scope, including what users see (design, states, phone
+layout) - not only logic unit tests cover. Be concise."""
+
 RESCUE_PROMPT = """Task {id} ({desc}) failed twice in earlier attempts; start fresh and read the failure carefully. Accept check: {accept}
 Last failure:
 {feedback}
@@ -842,6 +894,8 @@ def main() -> None:
     ap.add_argument("--critique-only", action="store_true", help="write BRIEF_REVIEW.md (one brain call) and stop")
     ap.add_argument("--critique-after", type=int, metavar="SECONDS",
                     help="wait; if .hybrid/brief_answered does not appear, critique and notify via Telegram")
+    ap.add_argument("--extend", metavar="BRIEF",
+                    help="next run of an existing project: append to PLAN.md/TASKS.md from this brief, then build")
     ap.add_argument("--brain", choices=["cloud", "local"],
                     help="who plans/reviews/rescues: cloud = Claude (default), local = Strata; saved per project")
     a = ap.parse_args()
@@ -858,7 +912,10 @@ def main() -> None:
         return
     if a.critique_only:
         sys.exit(0 if run.critique() else 1)
-    if not a.build_only and not run.tasks():
+    if a.extend:
+        if not run.extend(a.extend):
+            sys.exit(1)
+    elif not a.build_only and not run.tasks():
         if not run.plan():
             sys.exit(1)
     if not a.plan_only:

@@ -67,7 +67,7 @@ plans and weaker reviews than Claude's.
 
 ## Orchestrator
 
-`hybrid/hybrid_run.py <project> [--plan-only|--build-only]` - deterministic loop (config at the top): plan with Opus,
+`hybrid/hybrid_run.py <project> [--plan-only|--build-only|--extend <brief>]` - deterministic loop (config at the top): plan with Opus,
 each task with the local model, accept check run by the script, existing tests protected at function level (AST
 compare against the last commit), rescue with Sonnet after 2 local failures, Sonnet review per finished milestone,
 commit per task, max 10 cloud calls per run, stop on usage-limit errors. The `hybrid-dev` OpenClaw skill only starts
@@ -111,3 +111,10 @@ If the project has `.hybrid/visual.json` (start command, base URL, pages, option
 
 First run: 8 screenshots in 25 s, local review in 4 min, 5 real problems (a chart without a legend, the student page
 261 px wider than the phone, ...), each turned into a concrete fix task.
+
+## Next run of an existing project (2026-10-18)
+
+`--extend PROJECT_BRIEF_RUN2.md` plans a follow-up run on a finished project: the architect appends a new section
+to PLAN.md and new tasks to TASKS.md (numbering and milestones continue), then the build starts. The orchestrator
+checks deterministically that every existing task line is still there; a plan that rewrote or dropped one is rolled
+back. First use: a 48-task web app got 67 more tasks over 5 milestones in one 12-minute planning call.
