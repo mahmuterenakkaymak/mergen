@@ -32,12 +32,22 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.request
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
+
+import visual                      # screenshots of the running app for the visual review (hybrid/visual.py)
 
 # --- config -----------------------------------------------------------------
 BRAIN_PLAN_MODEL = "opus"          # one planning call per project
 BRAIN_REVIEW_MODEL = "sonnet"      # milestone reviews and rescues
+# Visual review: after a milestone listed in the project's .hybrid/visual.json, the app is started, every page is
+# screenshotted at phone and laptop width (hybrid/visual.py) and a reviewer LOOKS at them. "local" = Strata (needs
+# --vision; Qwen3.8-Flash-Next reads images, tested 2026-10-18), "cloud" = Sonnet. Local keeps screenshots of real
+# data at home; it falls back to cloud only when Strata has no image input and the run is not fully local.
+VISUAL_REVIEWER = os.environ.get("HYBRID_VISUAL_REVIEWER", "local")
+VISUAL_MAX_FIX_TASKS = 5
+VISUAL_PHONE_WIDTH = 390           # these screenshots also go to the phone
 CLAUDE_EXE = "claude"              # Claude Code CLI; BRAIN uses your Pro login
 HANDS_ENV = {                      # HANDS = the same CLI pointed at the local Strata model (like claude-local.cmd)
     "ANTHROPIC_BASE_URL": "http://127.0.0.1:8080",
@@ -103,6 +113,9 @@ MESSAGES = {
         "bg_review_fixes": "{ms} review: {n} fix görevi eklendi.\n{head}",
         "bg_review_failed": "{ms} review iki kez başarısız oldu, atlandı.",
         "memory_note": "🧠 {who} memory'ye not yazdı ({name}): {desc}",
+        "visual_no_screens": "{ms}: ekran görüntüsü alınamadı - {problems}",
+        "visual_screen": "{ms} ekranı: {name}",
+        "visual_done": "{ms} görsel review: {n} fix görevi eklendi.\n{head}",
         "done": "✅ bitti ({minutes} dk): {tasks} görev, {first_try} ilk denemede, {rescues} rescue, "
                 "başarısız: {failed}, {where} brain çağrısı: {calls}.",
         "none": "yok", "local": "yerel", "cloud": "cloud",
@@ -120,6 +133,9 @@ MESSAGES = {
         "bg_review_fixes": "{ms} review: {n} fix tasks added.\n{head}",
         "bg_review_failed": "{ms} review failed twice, skipped.",
         "memory_note": "🧠 {who} saved a memory note ({name}): {desc}",
+        "visual_no_screens": "{ms}: no screenshots - {problems}",
+        "visual_screen": "{ms} screen: {name}",
+        "visual_done": "{ms} visual review: {n} fix tasks added.\n{head}",
         "done": "✅ done ({minutes} min): {tasks} tasks, {first_try} first try, {rescues} rescues, "
                 "failed: {failed}, {where} brain calls: {calls}.",
         "none": "none", "local": "local", "cloud": "cloud",
@@ -135,6 +151,9 @@ def msg(key: str, **values) -> str:
 # node + entry script: openclaw.cmd re-parses arguments through cmd.exe and mangles them
 OPENCLAW_ENTRY = os.environ.get("OPENCLAW_ENTRY") or str(
     Path(shutil.which("openclaw") or "openclaw").resolve().parent / "node_modules" / "openclaw" / "openclaw.mjs")
+# OpenClaw sends local files only from its own media roots ("Local media path is not under an allowed directory"),
+# so screenshots are copied here first.
+OPENCLAW_MEDIA_DIR = Path.home() / ".openclaw" / "media" / "hybrid"
 # Test files guarded against tampering. Python: per test function (AST). Other languages: per file - no committed
 # line may be removed or changed (new tests may be added). Until 2026-10-16 only .py was checked: a JS project's
 # hands edited an existing vitest file unnoticed. A test file named in the task text may be edited (review fix tasks
@@ -193,15 +212,19 @@ class Run:
             with open(self.state / "log.md", "a", encoding="utf-8") as f:
                 f.write(line + "\n")
 
-    def notify(self, msg: str) -> None:
+    def notify(self, msg: str, media: Path | None = None) -> None:
         """Best effort: a failed notification never stops the build."""
         node = shutil.which("node")
         if not (NOTIFY_TELEGRAM_TARGET and node and Path(OPENCLAW_ENTRY).exists()):
             return
         text = f"🤝 {self.root.name}: {msg}"[:3500]
+        if media:
+            OPENCLAW_MEDIA_DIR.mkdir(parents=True, exist_ok=True)
+            media = Path(shutil.copy(media, OPENCLAW_MEDIA_DIR / f"{self.root.name}-{media.name}"))
         try:
             r = subprocess.run([node, OPENCLAW_ENTRY, "message", "send", "--channel", "telegram",
-                                "--target", NOTIFY_TELEGRAM_TARGET, "--message", text],
+                                "--target", NOTIFY_TELEGRAM_TARGET, "--message", text]
+                               + (["--media", str(media)] if media else []),
                                stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8",
                                errors="replace", timeout=120)
             if r.returncode != 0:
@@ -523,6 +546,56 @@ class Run:
     # main tree meanwhile. Its REVIEW.md and new TASKS.md lines are merged back by the main thread between tasks
     # (new task ids renumbered). With a local brain (mode or limit fallback) reviews stay in the foreground: they
     # would share Strata with the hands and gain nothing.
+    def strata_sees_images(self) -> bool:
+        try:
+            with urllib.request.urlopen(HANDS_ENV["ANTHROPIC_BASE_URL"] + "/health", timeout=5) as r:
+                return bool(json.loads(r.read()).get("images"))
+        except Exception:  # noqa: BLE001 - Strata down or old
+            return False
+
+    def visual_review(self, ms: str) -> None:
+        """Runs in the main loop between tasks (the hands are idle, so the app and Strata are free). Fix tasks it
+        appends to TASKS.md are picked up like review fixes."""
+        cfg = visual.load_config(self.root)
+        if not visual.wanted(cfg, ms):
+            return
+        out_dir = self.state / "screens" / ms
+        exclude = self.root / self.git("rev-parse", "--git-path", "info/exclude")   # screenshots stay out of commits
+        exclude.parent.mkdir(parents=True, exist_ok=True)
+        if ".hybrid/screens/" not in (exclude.read_text() if exclude.exists() else ""):
+            with open(exclude, "a", encoding="utf-8") as f:
+                f.write("\n.hybrid/screens/\n")
+        self.log("ORCH", f"{ms}: screenshots for the visual review")
+        pngs, problems = visual.take_screens(self.root, cfg, out_dir)
+        for prob in problems:
+            self.log("ORCH", f"{ms}: page problem: {prob}")
+        if not pngs:
+            self.notify(msg("visual_no_screens", ms=ms, problems="; ".join(problems)[:300]))
+            return
+        for png in pngs:
+            if png.stem.endswith(f"-{VISUAL_PHONE_WIDTH}"):
+                self.notify(msg("visual_screen", ms=ms, name=png.stem), media=png)
+        rel = [str(png.relative_to(self.root)).replace("\\", "/") for png in pngs]
+        prompt = VISUAL_REVIEW_PROMPT.format(ms=ms, files="\n".join(rel), max_tasks=VISUAL_MAX_FIX_TASKS,
+                                             problems="\n".join(problems) or "none")
+        before = len(self.tasks())
+        if VISUAL_REVIEWER == "local" and self.strata_sees_images():
+            self.log("BRAIN", f"{ms}: visual review with local Strata ({len(pngs)} screenshots)")
+            ok, out = self.agent("visual-local", prompt, env=HANDS_ENV)
+        elif not self.local:
+            self.log("BRAIN", f"{ms}: visual review with {BRAIN_REVIEW_MODEL} ({len(pngs)} screenshots)")
+            ok, out = self.brain(prompt, BRAIN_REVIEW_MODEL)
+        else:
+            self.log("BRAIN", f"{ms}: visual review skipped - local brain cannot read images (Strata without --vision)")
+            return
+        added = len(self.tasks()) - before
+        self.git("add", "TASKS.md", "VISUAL_REVIEW.md")
+        self.git("commit", "-q", "-m", f"{ms}: visual review")
+        self.log("BRAIN", f"{ms}: visual review {'done' if ok else 'FAILED'} - {added} fix task(s) added")
+        report = self.root / "VISUAL_REVIEW.md"
+        head = report.read_text(encoding="utf-8", errors="replace")[:600] if report.exists() else out[-400:]
+        self.notify(msg("visual_done", ms=ms, n=added, head=head))
+
     def start_review(self, ms: str) -> None:
         if self.local:
             self.review(ms)
@@ -616,6 +689,7 @@ class Run:
                 if ms not in reviewed and ms not in self.pending and all(t["done"] for t in all_tasks if t["ms"] == ms):
                     reviewed.add(ms)
                     reviewed_file.write_text(json.dumps(sorted(reviewed)))
+                    self.visual_review(ms)
                     self.start_review(ms)
 
         def open_tasks() -> list[dict]:
@@ -720,6 +794,20 @@ Work in as few turns as possible:
 - If it fails, fix and run it again. When it passes, stop - no extra checks, no summary.
 {feedback}
 {context}"""
+
+VISUAL_REVIEW_PROMPT = """Visual review of milestone {ms}. Screenshots of the running app (named <page>-<width>.png;
+390 = phone, 1366 = laptop):
+{files}
+Automatic page checks found:
+{problems}
+Read every screenshot with the Read tool (several in one turn) and PROJECT_BRIEF.md (its users and any design/UI
+section). Judge the pages as those end users would: readability at phone width, layout and overflow, clipped or
+overlapping text, unlabeled charts or numbers, empty or broken states, Turkish text, visual hierarchy, whether the
+page's main action is obvious. Real problems only - not taste.
+Write VISUAL_REVIEW.md (max 15 lines: page, problem, why it matters). For each real problem, at most {max_tasks},
+most serious first, append a fix task to TASKS.md in the same format (next free T number, milestone {ms}) whose accept
+command is a real check that fails today (build + a page test for the structural cause, e.g. the chart renders a
+legend, no element is wider than the phone screen). Do not fix code yourself."""
 
 RESCUE_PROMPT = """Task {id} ({desc}) failed twice in earlier attempts; start fresh and read the failure carefully. Accept check: {accept}
 Last failure:

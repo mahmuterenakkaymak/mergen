@@ -62,6 +62,8 @@ plans and weaker reviews than Claude's.
 - `claude` logged in with your Pro account (`claude` then `/login` once; the token expires and needs a re-login).
 - `claude-local` on PATH (`scripts\claude-local.cmd`, copied to `%USERPROFILE%\.local\bin`).
 - Strata running (agent mode).
+- For the visual review (optional): `pip install playwright` (it drives the installed Microsoft Edge, no browser
+  download) and Strata started with `--vision` plus the model's mmproj file, so the local model can read images.
 
 ## Orchestrator
 
@@ -93,3 +95,19 @@ directory" / "requires approval"), while the test suite still runs. Inside the p
 allowed - the folder is under git and every passing task is committed. A Docker-sandboxed OpenClaw agent was
 considered and rejected: it could not reach Strata or cloud Claude, and the risk lives in these workers, not in
 OpenClaw's own tools. MERGEN (main agent) keeps full host access for the PC-assistant tasks, with confirmation rules.
+
+## Visual review (2026-10-18)
+
+Tests can be green while the pages look wrong - a 48-task web app passed every check and was a plain admin table.
+If the project has `.hybrid/visual.json` (start command, base URL, pages, optional login; format in
+`hybrid/visual.py`), the orchestrator, after each listed milestone:
+
+1. starts the app and screenshots every page at 390 px (phone) and 1366 px (laptop) with headless Edge,
+2. checks HTTP errors, console errors and sideways scroll on the phone,
+3. sends the phone screenshots to Telegram,
+4. has a reviewer **look** at them and append fix tasks to TASKS.md. Default reviewer: local Strata
+   (Qwen3.8-Flash-Next reads images when Strata runs with `--vision`); Sonnet only if Strata has no image input and
+   the run is not fully local (`HYBRID_VISUAL_REVIEWER=cloud` forces it).
+
+First run: 8 screenshots in 25 s, local review in 4 min, 5 real problems (a chart without a legend, the student page
+261 px wider than the phone, ...), each turned into a concrete fix task.
