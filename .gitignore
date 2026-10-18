@@ -31,3 +31,5 @@ voice/models/
 config/active-model.json
 config/active-model.cmd
 config/language.json
+config/hybrid.json
+config/panel.json

@@ -217,7 +217,7 @@ Measured on the tested setup below with `scripts/bench_strata.py` (median of 3, 
 | | |
 |---|---|
 | **MERGEN** (`MERGEN-START.bat`) | agent mode on, gateway checked, dashboard + mode panel + voice widget open |
-| **AI Modes** (`scripts\mode-panel.bat`) | live VRAM / service status, one-click switch: **Agent** (Strata) · **Creative** (Unsloth Studio Qwen3.8-27B + ComfyUI) · **GPU free** |
+| **AI Modes** (`scripts\mode-panel.bat`) | live VRAM / service status, one-click switch: **Agent** (Strata) · **Creative** (Unsloth Studio Qwen3.8-27B + ComfyUI) · **GPU free**; code pipeline switch **Full local** · **Hybrid (Claude + Mergen)**; **New chat** button; TR / EN |
 | **MERGEN Voice** (`voice\mergen-voice.bat`) | always-on-top widget; click or **Ctrl+Alt+M** to listen |
 | Panel | http://127.0.0.1:18789 - `/new` for a fresh session, `/reasoning on` to see the model think |
 | Telegram | the same assistant on your phone; voice notes are transcribed locally |

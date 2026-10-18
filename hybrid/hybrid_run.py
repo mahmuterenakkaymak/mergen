@@ -11,6 +11,8 @@ escalation, the cloud-call budget and the test-tampering check all live here.
     python hybrid_run.py <project_dir> --critique-after 300   # same, but only if the user has not answered in 300 s
 
 The brain choice (cloud | local) is saved in .hybrid/mode.json, so a resumed --build-only run keeps it.
+The AI Modes panel switch ("Full local" | "Hybrid (Claude + Mergen)") writes config/hybrid.json; local wins whenever
+the panel or the project says local, so a project locked to local never goes to the cloud.
 
 Project files (the agents talk only through these):
     PROJECT_BRIEF.md  (you)        PLAN.md, TASKS.md (BRAIN)        REVIEW.md (BRAIN)
@@ -62,6 +64,7 @@ HANDS_ENV = {                      # HANDS = the same CLI pointed at the local S
 # orchestrator was started from OpenClaw. The brain gets them removed; the hands get their own values above.
 STRIP_FOR_BRAIN = ("ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_MODEL",
                    "ANTHROPIC_SMALL_FAST_MODEL", "CLAUDE_CODE_USE_LOCAL", "CLAUDE_CODE_LOCAL_URL")
+BRAIN_SWITCH_FILE = Path(__file__).resolve().parent.parent / "config" / "hybrid.json"   # written by the panel
 MAX_BRAIN_CALLS = 10               # plan + reviews + rescues, per run (cloud brain: Pro limits)
 MAX_LOCAL_BRAIN_CALLS = 30         # same cap for the local brain - free, but stops a review/fix loop
 MAX_TRIES_LOCAL = 2                # HANDS attempts before a rescue
@@ -180,6 +183,14 @@ def test_functions(rel: str, src: str) -> dict[str, str]:
     return out
 
 
+def panel_brain() -> str:
+    """'local' when the AI Modes panel is set to Full local, else 'cloud' (missing/broken file = cloud)."""
+    try:
+        return json.loads(BRAIN_SWITCH_FILE.read_text(encoding="utf-8-sig")).get("brain", "cloud")
+    except (OSError, ValueError):
+        return "cloud"
+
+
 TASK_RE = re.compile(r"^- \[( |x)\] (T\d+) \| (M\d+) \| (.+?) \| accept: (.+)$")
 
 
@@ -192,7 +203,7 @@ class Run:
         if brain_mode:
             mode_file.write_text(json.dumps({"brain": brain_mode}))
         saved = json.loads(mode_file.read_text())["brain"] if mode_file.exists() else "cloud"
-        self.local = saved == "local"
+        self.local = saved == "local" or panel_brain() == "local"
         self.budget_file = self.state / "budget.json"
         self.budget = json.loads(self.budget_file.read_text()) if self.budget_file.exists() else {"brain_calls": 0}
         self.brain_blocked = False
@@ -840,7 +851,7 @@ def main() -> None:
     if not (root / ".git").exists():
         subprocess.run(["git", "init", "-q"], cwd=root)
     run = Run(root, a.brain)
-    run.log("ORCH", f"brain: {'local Strata' if run.local else 'cloud Claude'}")
+    run.log("ORCH", f"brain: {'local Strata' if run.local else 'cloud Claude'} (panel: {panel_brain()})")
     started = time.time()
     if a.critique_after:
         run.critique_after(a.critique_after)
