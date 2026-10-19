@@ -168,6 +168,12 @@ OPENCLAW_MEDIA_DIR = Path.home() / ".openclaw" / "media" / "hybrid"
 TEST_GLOBS = ["tests/**/*.py", "test_*.py", "*_test.py",
               "*.test.js", "*.spec.js", "*.test.ts", "*.spec.ts", "*.test.mjs",
               "tests/**/*.cs", "*Tests.cs", "*Test.cs"]
+# Files that decide WHICH tests run (2026-10-19 review: a new conftest hook or an `addopts = -k ...` line can skip a
+# whole suite without touching a test). These must not change at all - additions included - unless the task names
+# them. conftest.py: existing functions must stay and no pytest_* hook may be added (new fixtures are fine).
+# package.json / pyproject.toml: only the test-runner part is guarded, so tasks can still add dependencies.
+TEST_CONFIG_GLOBS = ["pytest.ini", "tox.ini", "setup.cfg", "vitest.config.*", "vite.config.*", "jest.config.*",
+                     "*.runsettings"]
 # Claude Code wording seen 2026-10-16: "You've hit your session limit · resets 4:40pm" - "session limit" was missing,
 # so the M3 review of town-driving-game-v2 failed silently instead of falling back to the local brain.
 LIMIT_MARKERS = ("usage limit", "session limit", "weekly limit", "hit your", "rate limit", "limit reached", "quota",
@@ -185,6 +191,35 @@ def test_functions(rel: str, src: str) -> dict[str, str]:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test"):
             out[f"{rel}::{node.name}"] = ast.dump(node, include_attributes=False)
     return out
+
+
+def conftest_functions(rel: str, src: str) -> dict[str, str]:
+    """conftest.py: 'file::fn:<name>' -> AST dump of every module-level function (fixtures and pytest_* hooks)."""
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return {}
+    return {f"{rel}::fn:{n.name}": ast.dump(n, include_attributes=False) for n in tree.body
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+
+
+def runner_section(rel: str, src: str):
+    """The test-runner part of a manifest: package.json "scripts", pyproject [tool.pytest.ini_options]; else None."""
+    try:
+        if Path(rel).name == "package.json":
+            return json.loads(src).get("scripts", {})
+        if Path(rel).name == "pyproject.toml":
+            import tomllib
+            return tomllib.loads(src).get("tool", {}).get("pytest", {})
+    except ValueError:
+        return None
+    return None
+
+
+def mentioned_paths(text: str) -> set[str]:
+    """Paths written in a task text, as exact tokens. `rel in text` (until 2026-10-19) also matched a file whose
+    path is only part of another one (test_a.py inside tests/test_a.py)."""
+    return {tok.replace("\\", "/").rstrip(".,:;)'\"`") for tok in re.findall(r"[\w./\\-]+", text)}
 
 
 def panel_brain() -> str:
@@ -338,41 +373,150 @@ class Run:
         return subprocess.run(["git", *args], cwd=self.root, capture_output=True, text=True,
                               encoding="utf-8", errors="replace").stdout.strip()
 
+    @staticmethod
+    def guard_keys(rel: str, src: str) -> dict[str, str]:
+        """What is guarded in one file. Keys 'file::<kind>':
+        <test name>  Python test function, AST dump (unchanged; new tests are fine)
+        *            other test files, text (no committed line removed or changed; additions are fine)
+        exact        test-runner config, text (no change at all)
+        fn:<name>    conftest.py function, AST dump (unchanged)    hooks  conftest pytest_* hook names (none added)
+        runner       package.json scripts / pyproject pytest section, JSON (no change at all)"""
+        name = Path(rel).name
+        if name == "conftest.py":
+            fns = conftest_functions(rel, src)
+            hooks = sorted(k.split("fn:", 1)[1] for k in fns if k.split("fn:", 1)[1].startswith("pytest_"))
+            return {**fns, f"{rel}::hooks": json.dumps(hooks)}
+        if name in ("package.json", "pyproject.toml"):
+            section = runner_section(rel, src)
+            return {} if section is None else {f"{rel}::runner": json.dumps(section, sort_keys=True)}
+        if any(Path(rel).match(g) for g in TEST_CONFIG_GLOBS):
+            return {f"{rel}::exact": src}
+        if any(Path(rel).match(g) for g in TEST_GLOBS):
+            return test_functions(rel, src) if rel.endswith(".py") else {f"{rel}::*": src}
+        return {}
+
+    @staticmethod
+    def guarded(rel: str) -> bool:
+        name = Path(rel).name
+        return (name in ("conftest.py", "package.json", "pyproject.toml")
+                or any(Path(rel).match(g) for g in TEST_GLOBS + TEST_CONFIG_GLOBS))
+
     def committed_tests(self) -> dict[str, str]:
-        """Python: every test function in the last commit, 'file::name' -> AST dump of its body.
-        Other test files: 'file::*' -> the committed text. New tests and changed imports (Python) are fine;
-        an existing test that changed or vanished is tampering."""
+        """Everything guard_keys() protects, as of the last commit. An existing test (or a file deciding which tests
+        run) that changed or vanished after an agent ran is tampering; new tests are fine."""
         found = {}
         for rel in self.git("ls-files").splitlines():
-            if not any(Path(rel).match(g) for g in TEST_GLOBS):
-                continue
-            src = self.git("show", f"HEAD:{rel}")
-            if rel.endswith(".py"):
-                found.update(test_functions(rel, src))
-            else:
-                found[f"{rel}::*"] = src
+            if self.guarded(rel):
+                found.update(self.guard_keys(rel, self.git("show", f"HEAD:{rel}")))
         return found
 
+    def renamed_to(self, rel: str) -> tuple[str, list[tuple[str, str]]] | None:
+        """A guarded file that vanished: the present file with the same name it was moved to, and the name pairs the
+        move implies (tests/OldName.Tests/X.cs -> tests/NewName.Tests/X.cs gives OldName.Tests -> NewName.Tests
+        and OldName -> NewName). A rename task (2026-10-18) moved every test file and changed its namespace;
+        without this the guard rejected it every try."""
+        present = set(self.git("ls-files", "--cached", "--others", "--exclude-standard").splitlines())
+        old = Path(rel).parts
+        best = None
+        for cand in present:
+            new = Path(cand).parts
+            if new[-1] != old[-1] or len(new) != len(old) or not (self.root / cand).exists():
+                continue
+            diff = [(a, b) for a, b in zip(old, new) if a != b]
+            if best is None or len(diff) < len(best[1]):
+                best = (cand, diff)
+        if best is None:
+            return None
+        pairs = set(best[1])
+        for a, b in best[1]:                   # dotted parts too: OldName.Tests -> OldName, NewName
+            pairs |= {(x, y) for x, y in zip(a.split("."), b.split(".")) if x != y}
+        return best[0], sorted(pairs, key=lambda p: -len(p[0]))
+
     def changed_tests(self, before: dict[str, str], allowed: str = "") -> list[str]:
-        """Keys of tampered tests. Files whose path appears in `allowed` (the task text) are exempt."""
-        now, out = {}, []
+        """Keys of tampered guarded items. Files whose exact path is written in `allowed` (the task text) are exempt."""
+        exempt = mentioned_paths(allowed)
+        self.last_moves: dict[str, str] = {}          # old path -> where it was moved (for restore_tampered)
+        by_file: dict[str, dict[str, str]] = {}
         for key, old in before.items():
-            rel, name = key.split("::", 1)
-            if rel in allowed:
+            by_file.setdefault(key.split("::", 1)[0], {})[key] = old
+        out = []
+        for rel, olds in by_file.items():
+            if rel in exempt:
                 continue
             p = self.root / rel
-            cur = p.read_text(encoding="utf-8", errors="replace") if p.exists() else None
-            if name == "*":                    # line-based: every committed line must still be there, in order
-                if cur is None or self.lines_removed(old, cur):
+            if p.exists():
+                now = self.guard_keys(rel, p.read_text(encoding="utf-8", errors="replace"))
+            else:
+                moved = self.renamed_to(rel)
+                if moved is None:
+                    out += olds
+                    continue
+                new_rel, pairs = moved
+                self.last_moves[rel] = new_rel
+                if new_rel in exempt:
+                    continue
+                src = self.git("show", f"HEAD:{rel}")
+                for a, b in pairs:                # whole identifiers only: "A" must not turn Assert into Bssert
+                    src = re.sub(rf"(?<![\w]){re.escape(a)}(?![\w])", b, src)
+                olds = self.guard_keys(rel, src)          # the committed file, as the move should have left it
+                cur = (self.root / new_rel).read_text(encoding="utf-8", errors="replace")
+                now = {k.replace(new_rel, rel, 1): v for k, v in self.guard_keys(new_rel, cur).items()}
+            for key, old in olds.items():
+                kind = key.split("::", 1)[1]
+                new = now.get(key)
+                if new is None:
+                    bad = True
+                elif kind == "*":                  # line-based: every committed line must still be there, in order
+                    bad = self.lines_removed(old, new)
+                elif kind == "exact":
+                    bad = [l.strip() for l in old.splitlines() if l.strip()] != \
+                          [l.strip() for l in new.splitlines() if l.strip()]
+                elif kind == "hooks":
+                    bad = not set(json.loads(new)) <= set(json.loads(old))
+                else:
+                    # Python test keys are "file::name" - compared by the full key. Using `name` alone flagged every
+                    # existing Python test as changed, so every task of a Python project went to rescue.
+                    bad = new != old
+                if bad:
                     out.append(key)
+        # New files that decide which tests run: a fresh conftest.py with a hook, or a new runner config.
+        for rel in self.git("ls-files", "--others", "--exclude-standard").splitlines():
+            if rel in exempt or rel in by_file or rel in self.last_moves.values():
                 continue
-            if rel not in now:
-                now[rel] = test_functions(rel, cur) if cur is not None else {}
-            # test_functions() keys are "file::name" - look up the full key. Using `name` alone flagged every
-            # existing Python test as changed, so every task of a Python project went to rescue.
-            if now[rel].get(key) != old:
-                out.append(key)
+            keys = self.guard_keys(rel, (self.root / rel).read_text(encoding="utf-8", errors="replace"))
+            if json.loads(keys.get(f"{rel}::hooks", "[]")) or f"{rel}::exact" in keys:
+                out.append(f"{rel}::{'exact' if f'{rel}::exact' in keys else 'hooks'}")
         return sorted(out)
+
+    def restore_tampered(self, tampered: list[str]) -> list[str]:
+        """Committed files go back to the last commit. A file the agent created or moved one to is renamed to
+        '<name>.rejected' (kept for inspection, never deleted; pytest/dotnet/vitest no longer load it)."""
+        files = sorted({k.split("::", 1)[0] for k in tampered})
+        tracked = set(self.git("ls-files").splitlines())
+        exclude = self.root / self.git("rev-parse", "--git-path", "info/exclude")   # keep .rejected out of commits
+        exclude.parent.mkdir(parents=True, exist_ok=True)
+        if "*.rejected" not in (exclude.read_text() if exclude.exists() else ""):
+            with open(exclude, "a", encoding="utf-8") as f:
+                f.write("\n*.rejected\n")
+        for rel in files:
+            extra = [self.last_moves[rel]] if rel in self.last_moves else []
+            if rel in tracked:
+                self.git("checkout", "HEAD", "--", rel)
+            else:
+                extra.append(rel)
+            for x in extra:
+                p = self.root / x
+                if p.exists():
+                    p.replace(p.with_name(p.name + ".rejected"))
+        return files
+
+    def guard_tasks_file(self, snapshot: str, who: str) -> None:
+        """Agents never edit TASKS.md (2026-10-19 review: a worker could tick other tasks or rewrite later accept
+        commands). The orchestrator ticks tasks and merges review lines itself, so any agent edit is rolled back."""
+        path = self.root / "TASKS.md"
+        if path.exists() and path.read_text(encoding="utf-8") != snapshot:
+            path.write_text(snapshot, encoding="utf-8")
+            self.log("ORCH", f"{who} edited TASKS.md - restored")
 
     @staticmethod
     def lines_removed(old: str, new: str) -> bool:
@@ -524,13 +668,14 @@ class Run:
             # The worker's shell is Git Bash, which eats backslashes (.venv\Scripts\python -> .venvScriptspython,
             # exit 127). A worker once read that as "no shell" and saved it to memory, so later workers stopped
             # running their accept checks. The orchestrator still runs the original command in cmd.exe.
+            tasks_snapshot = (self.root / "TASKS.md").read_text(encoding="utf-8")
             self.hands(HANDS_PROMPT.format(**{**t, "accept": t["accept"].replace("\\", "/")}, feedback=feedback,
                                            context=self.task_context(t)))
+            self.guard_tasks_file(tasks_snapshot, f"{t['id']} hands")
             tampered = self.changed_tests(before, allowed=t["desc"])
             if tampered:
-                files = sorted({k.split("::")[0] for k in tampered})
-                self.log("ORCH", f"{t['id']}: existing tests changed {tampered} - restoring {files}")
-                self.git("checkout", "HEAD", "--", *files)
+                files = self.restore_tampered(tampered)
+                self.log("ORCH", f"{t['id']}: existing tests changed {tampered} - restored {files}")
                 feedback = (f"You changed or removed existing tests {tampered}; that is not allowed. Those files were "
                             "restored to the last commit (your new tests in them are gone too - add them again). "
                             "Fix the code, not the tests.")
@@ -548,11 +693,22 @@ class Run:
             self.log("BRAIN", f"{t['id']}: rescue with {self.brain_name(BRAIN_REVIEW_MODEL)}")
             self.notify(msg("rescue", id=t["id"], tries=MAX_TRIES_LOCAL, brain=self.brain_name(BRAIN_REVIEW_MODEL)))
             mem = self.memory_snapshot()
+            tasks_snapshot = (self.root / "TASKS.md").read_text(encoding="utf-8")
             ok, out = self.brain(RESCUE_PROMPT.format(**t, feedback=feedback), BRAIN_REVIEW_MODEL)
             self.report_memory(mem, "rescue")
+            self.guard_tasks_file(tasks_snapshot, f"{t['id']} rescue")
             if not ok:
                 break
             self.stats["rescues"] += 1
+            # The rescue is guarded like the hands (2026-10-19 review: it was not, so a rescue that weakened a test
+            # got committed).
+            tampered = self.changed_tests(before, allowed=t["desc"])
+            if tampered:
+                files = self.restore_tampered(tampered)
+                self.log("ORCH", f"{t['id']}: rescue changed existing tests {tampered} - restored {files}")
+                feedback = (f"The previous rescue changed existing tests {tampered}; that is not allowed and was "
+                            "undone. Fix the code, not the tests.")
+                continue
             ok, out = self.accept(t["accept"])
             if ok:
                 return self.commit(t, "brain")
@@ -578,7 +734,15 @@ class Run:
         ok, _ = self.brain(REVIEW_PROMPT.format(ms=ms), BRAIN_REVIEW_MODEL)
         if ok:
             self.stats["reviews"] += 1
-            self.git("add", "-A")
+            # A review only writes REVIEW.md and new TASKS.md lines ("Do not fix code yourself"). Anything else it
+            # touched is set aside in a stash, not committed (2026-10-19 review: `git add -A` committed it unchecked).
+            changed = (self.git("diff", "--name-only", "HEAD").splitlines()
+                       + self.git("ls-files", "--others", "--exclude-standard").splitlines())
+            other = [p for p in changed if p not in ("TASKS.md", "REVIEW.md") and not p.startswith(".hybrid/")]
+            if other:
+                self.git("stash", "push", "-u", "-q", "-m", f"{ms} review side effects", "--", *other)
+                self.log("ORCH", f"{ms}: review also changed {other[:5]} - stashed, not committed")
+            self.git("add", "TASKS.md", "REVIEW.md")
             self.git("commit", "-q", "-m", f"{ms}: review (brain)")
             added = sum(1 for t in self.tasks() if not t["done"]) - open_before
             review = (self.root / "REVIEW.md")
