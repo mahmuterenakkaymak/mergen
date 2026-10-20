@@ -97,7 +97,8 @@ PowerShell, in order. Every script has its settings at the top and arrow-key men
 Step 3 ends with one interactive step OpenClaw has no flag for (the local embedding server); the script prints exactly
 what to pick. From then on, start everything with **`MERGEN-START.bat`**. Switching models later: run step 1 with
 another `-Model`, then step 3. Optional: voice ([voice/](voice/)), a Telegram bot ([MCP & channels](docs/mcp.md)),
-`HYBRID_NOTIFY_TELEGRAM=<your chat id>` for pipeline notifications, `UNSLOTH_API_KEY` for creative mode
+`HYBRID_NOTIFY_TELEGRAM=<your chat id>` for pipeline notifications and research reports, `TAVILY_API_KEY` (free tier)
+for reliable web search in deep research, `UNSLOTH_API_KEY` for creative mode
 ([modes](docs/modes-and-models.md)).
 
 ### Model builds
@@ -249,7 +250,7 @@ takes any name.
 | `windows-assistant` | files, apps, Spotify, media keys, "search / open in Google". **Asks before every delete and move.** |
 | `project-brief` | turns an idea into a buildable brief; lists what you didn't say but will expect |
 | `hybrid-dev` | starts the orchestrator, reports progress, never writes the project itself |
-| `deep-research` | multi-step cited research with local SearXNG; writes a report file |
+| `deep-research` | 25+ searches, 15+ pages read, every cited page actually fetched and every number found on it - a script checks the report before it counts as done, then sends it to Telegram |
 | `youtube-analysis` | video/channel stats and summaries with yt-dlp, numbers computed in Python |
 
 **Recommended extra skills** - not bundled, only pointers. They use the same `SKILL.md` format; copy the ones you want

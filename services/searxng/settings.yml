@@ -20,3 +20,24 @@ search:
 
 ui:
   default_theme: simple
+
+# Engines (2026-10-20): with the defaults often only Bing answers from a home IP - Google "access denied", Brave /
+# Wikipedia rate-limited, DuckDuckGo CAPTCHA. Enable more independent web indexes; SearXNG suspends a blocked one by
+# itself and the others carry on. For reliable results set TAVILY_API_KEY (skills/deep-research).
+engines:
+  - name: bing
+    disabled: false
+  - name: mojeek
+    disabled: false
+  - name: yahoo
+    disabled: false
+  - name: yandex
+    disabled: false
+  - name: marginalia
+    disabled: false
+  - name: seznam
+    disabled: false
+  - name: swisscows
+    disabled: false
+  - name: dogpile
+    disabled: false
