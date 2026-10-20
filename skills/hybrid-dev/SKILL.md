@@ -35,6 +35,10 @@ Your job: talk to the user (in {{LANGUAGE}}), start runs, watch, report.
   runs keep it, so the build command does not change. To switch an existing project, add `--brain cloud` or
   `--brain local` to the build command.
 - If the user did not say, use cloud - unless the brief marks data as personal/customer: then ask.
+- **Games, anything with a UI or a "feel"**: add `--prototype` to the plan command. The local model first builds a
+  free, rich sketch in `prototype/` (no tests, ~5-15 min) and lists its features in `prototype/FEATURES.md`; the plan
+  must then reach at least that richness, plus a "Delight" section of crafted details. Tell the user they can open
+  `prototype/index.html` while the build runs. Skip it for pure back-end/data work.
 
 ## Steps
 

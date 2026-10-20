@@ -202,5 +202,36 @@ class RunTaskTests(unittest.TestCase):
             r.close()
 
 
+class BrokenAcceptTests(unittest.TestCase):
+    def test_broken_command_is_not_retried_or_rescued(self):
+        calls = []
+        r = Repo({"tests/test_math.py": PY_TEST},
+                 tasks="- [ ] T01 | M1 | x | accept: definitely-not-a-command-xyz --run\n")
+        try:
+            r.run.agent = lambda label, *a, **k: (calls.append(label), (True, ""))[1]
+            self.assertFalse(r.run.run_task(r.run.tasks()[0]))
+            self.assertEqual(calls, ["hands"])                  # one try, no second try, no rescue
+            self.assertEqual(r.run.stats["broken_accept"], ["T01"])
+        finally:
+            r.close()
+
+
+class AcceptCommandTests(unittest.TestCase):
+    def test_trailing_explanation_is_dropped(self):
+        cmd = "npx vitest run tests/cta.test.js (new test reads src/style.css: the rule uses animation-name)"
+        self.assertEqual(h.clean_accept(cmd), "npx vitest run tests/cta.test.js")
+
+    def test_nested_brackets_in_the_explanation(self):
+        cmd = "npx vitest run tests/w.test.js (new test builds buildTownMeshes(generateTown(...)) headless and asserts"
+        self.assertEqual(h.clean_accept(cmd), "npx vitest run tests/w.test.js")
+
+    def test_backticks_are_dropped(self):
+        self.assertEqual(h.clean_accept("`npm test`"), "npm test")
+
+    def test_real_brackets_are_kept(self):
+        for cmd in ['python -c "print(1 + (2))"', "dotnet test --filter (Name~Login)", 'node -e "f(a (b))"']:
+            self.assertEqual(h.clean_accept(cmd), cmd)
+
+
 if __name__ == "__main__":
     unittest.main()

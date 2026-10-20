@@ -39,6 +39,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 
 import visual                      # screenshots of the running app for the visual review (hybrid/visual.py)
+import checks                      # whole-project suites + smoke runs at milestone and run end (hybrid/checks.py)
 
 # --- config -----------------------------------------------------------------
 BRAIN_PLAN_MODEL = "opus"          # one planning call per project
@@ -49,6 +50,10 @@ BRAIN_REVIEW_MODEL = "sonnet"      # milestone reviews and rescues
 # data at home; it falls back to cloud only when Strata has no image input and the run is not fully local.
 VISUAL_REVIEWER = os.environ.get("HYBRID_VISUAL_REVIEWER", "local")
 VISUAL_MAX_FIX_TASKS = 5
+# Eyes for the workers (2026-10-20): hybrid/browser_check.py opens a page in headless Edge, prints its errors and saves a
+# screenshot the local model can read. Forward slashes: the workers' shell is Git Bash.
+BROWSER_CHECK = str(Path(__file__).resolve().parent / "browser_check.py").replace("\\", "/")
+VISUAL_MAX_POLISH_TASKS = 2         # "would feel better" tasks next to the real fixes
 VISUAL_PHONE_WIDTH = 390           # these screenshots also go to the phone
 CLAUDE_EXE = "claude"              # Claude Code CLI; BRAIN uses your Pro login
 HANDS_ENV = {                      # HANDS = the same CLI pointed at the local Strata model (like claude-local.cmd)
@@ -124,6 +129,9 @@ MESSAGES = {
         "done": "✅ bitti ({minutes} dk): {tasks} görev, {first_try} ilk denemede, {rescues} rescue, "
                 "başarısız: {failed}, {where} brain çağrısı: {calls}.",
         "none": "yok", "local": "yerel", "cloud": "cloud",
+        "prototype_ready": 'prototip hazır ({n} özellik): prototype/ - plan bunu çıta alacak.',
+        "accept_broken": '⚠️ {id}: kabul komutu bozuk (kod değil, komut) - tekrar denenmedi, açık: `{accept}`',
+        "checks_red": '{ms}: tüm proje kontrolü kırmızı ({failed}/{n}): {cmds}',
     },
     "en": {
         "fallback": "{why}: the run goes on; plan/review/rescue now run on local Strata (fully local).",
@@ -145,6 +153,9 @@ MESSAGES = {
         "visual_done": "{ms} visual review: {n} fix tasks added.\n{head}",
         "done": "✅ done ({minutes} min): {tasks} tasks, {first_try} first try, {rescues} rescues, "
                 "failed: {failed}, {where} brain calls: {calls}.",
+        "prototype_ready": 'prototype ready ({n} features): prototype/ - the plan takes it as the bar.',
+        "accept_broken": '⚠️ {id}: the accept command is broken (the command, not the code) - not retried, left open: `{accept}`',
+        "checks_red": '{ms}: whole-project checks red ({failed}/{n}): {cmds}',
         "none": "none", "local": "local", "cloud": "cloud",
     },
 }
@@ -228,6 +239,40 @@ def panel_brain() -> str:
         return json.loads(BRAIN_SWITCH_FILE.read_text(encoding="utf-8-sig")).get("brain", "cloud")
     except (OSError, ValueError):
         return "cloud"
+
+
+def clean_accept(cmd: str) -> str:
+    """The bare command. Models wrap it in backticks, and the local visual reviewer once appended an explanation:
+    `npx vitest run tests/cta.test.js (new test reads src/style.css ...)` - cmd.exe then fails with "The system cannot
+    find the path specified" and the task can never pass (town-driving-game-v3 T59-T67, 2026-10-20). From the first
+    " (" outside quotes whose bracket text contains a space (explanations do, nested brackets and all; command
+    syntax like `--filter (Name~Login)` does not) the rest of the line is dropped."""
+    cmd = cmd.strip().strip("`").strip()
+    quote = ""
+    for i, ch in enumerate(cmd):
+        if quote:
+            quote = "" if ch == quote else quote
+        elif ch in "\"'":
+            quote = ch
+        elif ch == "(" and i > 0 and cmd[i - 1].isspace():
+            depth, j = 0, i
+            while j < len(cmd):                     # the bracket text, to its matching ")" or the line end
+                depth += {"(": 1, ")": -1}.get(cmd[j], 0)
+                if depth == 0:
+                    break
+                j += 1
+            if " " in cmd[i + 1:j]:
+                return cmd[:i].rstrip().strip("`").strip()
+    return cmd
+
+
+CMD_ERROR_MARKERS = ("The system cannot find the path specified", "is not recognized as an internal or external command",
+                     "The syntax of the command is incorrect", "was unexpected at this time")
+
+
+def broken_command(out: str) -> bool:
+    """cmd.exe could not run the accept command at all - a broken command, not failing code."""
+    return any(m in out for m in CMD_ERROR_MARKERS)
 
 
 TASK_RE = re.compile(r"^- \[( |x)\] (T\d+) \| (M\d+) \| (.+?) \| accept: (.+)$")
@@ -540,7 +585,7 @@ class Run:
         for line in path.read_text(encoding="utf-8").splitlines() if path.exists() else []:
             m = TASK_RE.match(line.strip())
             if m:
-                accept = m[5].strip().strip("`").strip()     # models like to wrap commands in backticks
+                accept = clean_accept(m[5])
                 out.append({"done": m[1] == "x", "id": m[2], "ms": m[3], "desc": m[4].strip(), "accept": accept})
         return out
 
@@ -584,6 +629,37 @@ class Run:
             self.notify(msg("critique", minutes=seconds // 60, brain=self.brain_name(BRAIN_PLAN_MODEL), text=text[:2500]))
         else:
             self.notify(msg("critique_failed"))
+
+    def prototype(self) -> bool:
+        """Free first version before the plan (2026-10-20): the local model builds the whole thing at once, no tests,
+        no discipline rules - the way a direct request to MERGEN produced a richer game in 2 minutes than 19 planned
+        tasks. Its FEATURES.md becomes the quality bar for the plan. Kept in prototype/ for reference."""
+        if (self.root / "prototype" / "FEATURES.md").exists():
+            self.log("ORCH", "prototype/ already there - using it")
+            return True
+        self.log("HANDS", "free prototype (quality bar for the plan)")
+        ok, out = self.hands(PROTOTYPE_PROMPT.format(browser_check=BROWSER_CHECK))
+        done = (self.root / "prototype" / "FEATURES.md").exists()
+        if done and (self.root / "prototype" / "index.html").exists():
+            # The first prototype (town-driving-game-v3) threw on load and never drew a frame; nobody had opened it.
+            r = subprocess.run([sys.executable, BROWSER_CHECK, "prototype", "--keys", "click,wait:2",
+                                "--out", ".hybrid/browser/prototype.png"], cwd=self.root, capture_output=True,
+                               text=True, encoding="utf-8", errors="replace", timeout=300)
+            if r.returncode != 0:
+                self.log("ORCH", f"prototype has page errors - one fix round: {r.stdout.strip()[-300:]}")
+                self.hands(PROTOTYPE_FIX_PROMPT.format(report=r.stdout.strip()[-3000:], browser_check=BROWSER_CHECK))
+                r = subprocess.run([sys.executable, BROWSER_CHECK, "prototype", "--keys", "click,wait:2",
+                                    "--out", ".hybrid/browser/prototype.png"], cwd=self.root, capture_output=True,
+                                   text=True, encoding="utf-8", errors="replace", timeout=300)
+            self.log("ORCH", f"prototype in the browser: {'no page errors' if r.returncode == 0 else 'STILL ERRORS'}")
+        self.log("HANDS", f"prototype {'done' if done else 'FAILED'}")
+        if done:
+            n = sum(1 for l in (self.root / "prototype" / "FEATURES.md").read_text(encoding="utf-8").splitlines()
+                    if l.lstrip().startswith(("-", "*")))
+            self.notify(msg("prototype_ready", n=n))
+            self.git("add", "-A")
+            self.git("commit", "-q", "-m", "Prototype: free first version, the quality bar for the plan (hands)")
+        return done
 
     def plan(self) -> bool:
         if not (self.root / "PROJECT_BRIEF.md").exists():
@@ -686,6 +762,8 @@ class Run:
                 if attempt == 1:
                     self.stats["first_try"] += 1
                 return self.commit(t, "hands")
+            if broken_command(out):
+                return self.broken_accept(t, out)
             feedback = f"The accept check `{t['accept']}` failed:\n{out}"
             self.stats["local_retries"] += 1
         # rescue
@@ -712,9 +790,21 @@ class Run:
             ok, out = self.accept(t["accept"])
             if ok:
                 return self.commit(t, "brain")
+            if broken_command(out):
+                return self.broken_accept(t, out)
             feedback = out
         self.log("ORCH", f"{t['id']}: FAILED - left open")
         self.notify(msg("task_failed", id=t["id"], desc=t["desc"][:150]))
+        self.stats["failed"].append(t["id"])
+        return False
+
+    def broken_accept(self, t: dict, out: str) -> bool:
+        """The accept command itself cannot run (cmd.exe error). Neither the worker nor a rescue can fix that - they
+        may not edit TASKS.md - so retrying only burns time and cloud calls (v3, 2026-10-20: 9 such tasks x 3 calls
+        emptied the cloud budget). Leave it open, say why, go on."""
+        self.log("ORCH", f"{t['id']}: ACCEPT COMMAND BROKEN, not retried: `{t['accept']}` -> {out.strip()[-200:]}")
+        self.notify(msg("accept_broken", id=t["id"], accept=t["accept"][:120]))
+        self.stats.setdefault("broken_accept", []).append(t["id"])
         self.stats["failed"].append(t["id"])
         return False
 
@@ -725,13 +815,13 @@ class Run:
         self.log("ORCH", f"{t['id']}: PASSED ({by})")
         return True
 
-    def review(self, ms: str) -> None:
+    def review(self, ms: str, gate: str = "") -> None:
         if self.brain_blocked:
             self.log("ORCH", f"{ms}: review skipped (cloud unavailable)")
             return
         self.log("BRAIN", f"{ms}: review with {self.brain_name(BRAIN_REVIEW_MODEL)}")
         open_before = sum(1 for t in self.tasks() if not t["done"])
-        ok, _ = self.brain(REVIEW_PROMPT.format(ms=ms), BRAIN_REVIEW_MODEL)
+        ok, _ = self.brain(REVIEW_PROMPT.format(ms=ms, gate=gate), BRAIN_REVIEW_MODEL)
         if ok:
             self.stats["reviews"] += 1
             # A review only writes REVIEW.md and new TASKS.md lines ("Do not fix code yourself"). Anything else it
@@ -750,6 +840,23 @@ class Run:
             self.notify(msg("review_fixes", ms=ms, n=added, head=head))
         else:
             self.notify(msg("review_skipped", ms=ms))
+
+    def gate(self, ms: str) -> str:
+        """Every test suite and smoke run of the whole project (a task's accept runs only its own tests). Returns
+        the text for the review prompt; a red result is what the review must turn into fix tasks first."""
+        self.log("ORCH", f"{ms}: whole-project checks")
+        n, failures = checks.run(self.root)
+        self.stats["checks"] = "red" if failures else "green"
+        if not n:
+            self.log("ORCH", f"{ms}: no whole-project checks configured or detected")
+            return GATE_NONE
+        if not failures:
+            self.log("ORCH", f"{ms}: whole-project checks green ({n} command(s))")
+            return GATE_GREEN.format(n=n)
+        self.log("ORCH", f"{ms}: whole-project checks RED: {[f['cmd'] for f in failures]}")
+        self.notify(msg("checks_red", ms=ms, failed=len(failures), n=n,
+                        cmds=", ".join(f["cmd"] for f in failures)[:300]))
+        return GATE_RED.format(ms=ms, report=checks.report(failures))
 
     # --- background reviews ---------------------------------------------------------
     # A cloud review runs in a detached git worktree of the milestone's last commit, so the hands keep editing the
@@ -787,6 +894,7 @@ class Run:
                 self.notify(msg("visual_screen", ms=ms, name=png.stem), media=png)
         rel = [str(png.relative_to(self.root)).replace("\\", "/") for png in pngs]
         prompt = VISUAL_REVIEW_PROMPT.format(ms=ms, files="\n".join(rel), max_tasks=VISUAL_MAX_FIX_TASKS,
+                                             max_polish=VISUAL_MAX_POLISH_TASKS,
                                              problems="\n".join(problems) or "none")
         before = len(self.tasks())
         if VISUAL_REVIEWER == "local" and self.strata_sees_images():
@@ -806,23 +914,23 @@ class Run:
         head = report.read_text(encoding="utf-8", errors="replace")[:600] if report.exists() else out[-400:]
         self.notify(msg("visual_done", ms=ms, n=added, head=head))
 
-    def start_review(self, ms: str) -> None:
+    def start_review(self, ms: str, gate: str = "") -> None:
         if self.local:
-            self.review(ms)
+            self.review(ms, gate)
             return
         wt = Path(tempfile.mkdtemp(prefix=f"hybrid-{self.root.name}-{ms}-"))
         wt.rmdir()                                         # git creates it
         self.git("worktree", "add", "--detach", str(wt), "HEAD")
         if not (wt / "TASKS.md").exists():
             self.log("ORCH", f"{ms}: worktree failed - reviewing in the foreground")
-            self.review(ms)
+            self.review(ms, gate)
             return
         for d in ("node_modules", ".venv"):               # share installed deps through a junction (no copy)
             if (self.root / d).is_dir():
                 subprocess.run(["cmd", "/c", "mklink", "/J", str(wt / d), str(self.root / d)], capture_output=True)
         base_lines = {l.strip() for l in (wt / "TASKS.md").read_text(encoding="utf-8").splitlines()}
         self.log("BRAIN", f"{ms}: review with {BRAIN_REVIEW_MODEL} in the background - hands keep building")
-        job = self.pool.submit(self.brain, REVIEW_PROMPT.format(ms=ms), BRAIN_REVIEW_MODEL, wt)
+        job = self.pool.submit(self.brain, REVIEW_PROMPT.format(ms=ms, gate=gate), BRAIN_REVIEW_MODEL, wt)
         self.pending[ms] = (wt, base_lines, job)
 
     def remove_worktree(self, wt: Path) -> None:
@@ -899,13 +1007,15 @@ class Run:
                 if ms not in reviewed and ms not in self.pending and all(t["done"] for t in all_tasks if t["ms"] == ms):
                     reviewed.add(ms)
                     reviewed_file.write_text(json.dumps(sorted(reviewed)))
+                    gate = self.gate(ms)              # before the visual review: its fix tasks are not built yet
                     self.visual_review(ms)
-                    self.start_review(ms)
+                    self.start_review(ms, gate)
 
         def open_tasks() -> list[dict]:
             out = [t for t in self.tasks() if not t["done"] and t["id"] not in self.stats["failed"]]
             return sorted(out, key=lambda t: int(t["ms"][1:]))   # an earlier milestone's fix tasks go first
 
+        final_checked = False
         try:
             review_done_milestones()
             while True:
@@ -920,6 +1030,14 @@ class Run:
                     review_done_milestones()      # a failed review may have been un-marked for its retry
                     if self.pending or open_tasks():
                         continue
+                    if not final_checked:         # the last review's fixes ran after the last milestone gate
+                        final_checked = True
+                        gate = self.gate("final")
+                        if gate.startswith("The whole-project checks are RED"):
+                            last_ms = max((t["ms"] for t in self.tasks()), key=lambda m: int(m[1:]))
+                            self.review(last_ms, gate)    # foreground, one round only
+                            if open_tasks():
+                                continue
                     break
                 self.run_task(todo[0])
                 review_done_milestones()          # a review may append fix tasks to TASKS.md; the loop picks them up
@@ -943,11 +1061,33 @@ class Run:
                         calls=s["brain_calls"]))
 
 
+# Whole-program rules for the architect (2026-10-20, a 3D driving game built by this pipeline): every unit test passed
+# while bumpers and lamps stayed still as the body leaned (the task said "body and cabin"), traffic cars rendered
+# without bodies (the renderer read lean fields the traffic module never set) and 3 tests stayed red for 50 tasks
+# after a later change. Same failure shapes in any program: a form that disables half its fields, a total updated on
+# screen but not in the export, an import job reading a column one source never fills.
+WHOLE_PROGRAM_RULES = """Whole-program rules:
+- Contracts: in PLAN.md section "Contracts", list every data shape one module hands to another (fields, which are
+  optional, the default when one is missing). Every milestone has at least one integration task whose test feeds the
+  real producers into the real consumers (no hand-made fakes) and checks the result.
+- Wholes: when a task changes how something made of parts behaves, the task text names every part that must follow
+  (all parts of a model, every field of a form, every place that shows the same value).
+- Checks: write .hybrid/checks.json: {"suite": [<every test suite command>], "smoke": [<1-3 commands that run the real
+  program end to end - a CLI on sample input, the server started and called, a job on a fixture - exit 0 = works>]}.
+  The orchestrator runs them all after every milestone and at the end.
+- Flows: if the product has screens, write .hybrid/visual.json (keep an existing one, add pages):
+  {"start": "<command that serves the app>", "base_url": "http://localhost:<port>", "ready_path": "/",
+   "pages": [{"name": "<flow>", "path": "/...", "steps": [...]}]}. Pages are the main user flows, not only landing
+  pages: steps reach the states worth seeing - after a form submit, an empty state, an error, a game in motion.
+  Steps: "click" (centre) | "click:X:Y" | "key:<key>:<seconds held>" | "press:<key>" | "wait:<seconds>" |
+  "shot:<name>" (extra screenshot mid-flow) | {"click": "<css selector>"} | {"fill": ["<css selector>", "<text>"]}."""
+
 PLAN_PROMPT = """You are the architect. Read PROJECT_BRIEF.md.
 1. Write PLAN.md: architecture, file layout, key decisions (section "Decisions"), milestones M1..Mn.
 2. Write TASKS.md: small tasks in build order, ONE PER LINE, exactly this format:
    - [ ] T01 | M1 | <what to build> | accept: <command that exits 0 only when the task is done>
-   Write the accept command bare (no backticks or quotes around it); it runs in cmd.exe from the project root.
+   Write the accept command bare (no backticks or quotes around it, nothing after it); it runs in cmd.exe from the
+   project root.
    The accept command must be a real check that runs this task's tests, in the project's own stack, e.g.
    `.venv\\Scripts\\python -m pytest tests/test_parser.py -q` (Python) or `npx vitest run tests/car.test.js` (JS).
    Each task's tests are written as part of that task.
@@ -961,7 +1101,31 @@ PLAN_PROMPT = """You are the architect. Read PROJECT_BRIEF.md.
 Do NOT implement features. Be concise.
 Plan everything the brief puts In scope, including what a player/user sees, hears and feels (visual details, sound,
 HUD, feedback, recovery from stuck states), not only logic that unit tests can cover. For such a task use an accept
-command that still checks something real (build passes plus a test that the module creates/exports the thing)."""
+command that still checks something real (build passes plus a test that the module creates/exports the thing).
+If prototype/ exists: it is a free first version written before this plan and it is the QUALITY BAR. Read
+prototype/FEATURES.md and the prototype code. Every feature and detail in it must reach the real product, planned as
+tasks; the product must feel at least as rich. Do not copy its code as is - rebuild it properly with tests.
+Delight pass: then list in PLAN.md, section "Delight", 5-8 details nobody asked for that would make this feel crafted
+rather than merely correct (a game: camera shake, particles, sound cues, smooth transitions, a satisfying start screen;
+an app: micro-feedback, friendly empty states, small animations, keyboard shortcuts). Plan each as its own small task
+in the milestone where it fits. Never put something from the brief's "Out" list there.
+""" + WHOLE_PROGRAM_RULES
+
+PROTOTYPE_PROMPT = """Read PROJECT_BRIEF.md. Build a complete, rich first version of it in the folder prototype/ - the
+version you would make if someone asked you for this and you wanted them to be delighted. Everything In scope, plus
+the details that make this kind of product feel alive (for a game: sound, HUD, effects, feel, a start screen; for an
+app: real-looking content, feedback, states). Respect the brief's "Out" list and its stack where practical, but this is
+a sketch: few files, no tests, no build step needed (a single index.html with a module script is fine; a library from
+a CDN is fine here even if the real product must run offline).
+Check it in a real browser before you call it done: `python {browser_check} prototype --keys "click,wait:2"`
+prints page errors and saves a screenshot - open the screenshot with the Read tool and look at it. Fix every error.
+When it works, write prototype/FEATURES.md: one line per feature and per detail you added, "- <feature>: <how it
+looks/feels>". Do not touch anything outside prototype/. Be quick: this is a sketch, not the product."""
+
+PROTOTYPE_FIX_PROMPT = """The prototype in prototype/ was opened in a real browser and fails:
+{report}
+Fix it in prototype/ only (keep its features). Re-check with: python {browser_check} prototype --keys "click,wait:2"
+and open the screenshot it saves with the Read tool. Stop when it prints "no page errors" and the screenshot looks right."""
 
 CRITIQUE_PROMPT = """You are a product critic reviewing PROJECT_BRIEF.md before anything is planned. Read it. Do not write code.
 Think about what a typical user of this kind of product expects that the brief does not say: genre conventions
@@ -980,12 +1144,18 @@ Max 3 lines. Do not edit PROJECT_BRIEF.md.""".replace("{language}", LANGUAGE_NAM
 # Change discipline below: own wording of ideas from multica-ai/andrej-karpathy-skills (Karpathy's notes on LLM coding
 # pitfalls) and DietrichGebert/ponytail (MIT, "smallest complete change"), adapted for an unattended worker: there is
 # nobody to ask, so assumptions are written down where the reviewer will see them. Added 2026-10-17.
-HANDS_PROMPT = """Do task {id}: {desc}
+HANDS_PROMPT_TEMPLATE = """Do task {id}: {desc}
 Write the code and its tests for this task only; do not change other tasks' code and do not modify existing tests.
 
 How to change code:
 - Smallest complete change: everything the task needs (callers, tests, wiring into the app), nothing it does not -
   no extra features, options, abstractions or "for later" code. If 200 lines could be 50, write 50.
+- That rule is about code, not about how it feels. Whatever this task shows to the user (screen, sound, motion,
+  message) must feel finished, not placeholder: feedback when something happens, sensible defaults, smooth
+  transitions, no raw debug look. Stay inside this task - do not add features it does not name.
+- Whole, not half: if what you change is made of parts, every part follows (all parts of a model, every field of a
+  form, every place that shows the same value). Data that comes from another module may lack fields (PLAN.md
+  "Contracts"): handle the missing case so it never turns into NaN/undefined/null on screen or in a total.
 - Surgical: touch only lines this task needs. Do not reformat, rename or "improve" neighbouring code; match the
   style around you. Remove only what your own change made unused.
 - Reuse first: a helper already in the project, then the standard library, then an installed dependency. Never add a
@@ -1001,23 +1171,32 @@ Work in as few turns as possible:
   build/test/new/add/restore, npm install/test/run, npx vitest, node, read-only git. Anything else is denied by
   design (not a broken shell) - do not retry it, and do not save "the shell is blocked" to memory.
 - Write the code and tests, run the accept check once: {accept}
-- If it fails, fix and run it again. When it passes, stop - no extra checks, no summary.
+- If it fails, fix and run it again.
+- If this task changes what a browser page shows: after the accept check passes, open it once in a real browser -
+  `python BROWSER_CHECK <index.html | folder | http://localhost:PORT --cmd "npm run dev -- --port PORT --strictPort">`
+  (add --keys "click,key:w:2" to interact). It prints page errors and saves a screenshot: open the screenshot with
+  the Read tool and look at it. Fix real errors or a blank/broken screen, then stop - no summary.
+- Otherwise, when the accept check passes, stop - no extra checks, no summary.
 {feedback}
 {context}"""
 
-VISUAL_REVIEW_PROMPT = """Visual review of milestone {ms}. Screenshots of the running app (named <page>-<width>.png;
-390 = phone, 1366 = laptop):
+VISUAL_REVIEW_PROMPT = """Visual review of milestone {ms}. Screenshots of the running app (named <page>-<width>.png,
+taken after the page's flow steps, and <page>-<shot>-<width>.png mid-flow; 390 = phone, 1366 = laptop):
 {files}
 Automatic page checks found:
 {problems}
 Read every screenshot with the Read tool (several in one turn) and PROJECT_BRIEF.md (its users and any design/UI
 section). Judge the pages as those end users would: readability at phone width, layout and overflow, clipped or
 overlapping text, unlabeled charts or numbers, empty or broken states, Turkish text, visual hierarchy, whether the
-page's main action is obvious. Real problems only - not taste.
-Write VISUAL_REVIEW.md (max 15 lines: page, problem, why it matters). For each real problem, at most {max_tasks},
-most serious first, append a fix task to TASKS.md in the same format (next free T number, milestone {ms}) whose accept
-command is a real check that fails today (build + a page test for the structural cause, e.g. the chart renders a
-legend, no element is wider than the phone screen). Do not fix code yourself."""
+page's main action is obvious, and whether every part of a thing looks and moves as one (nothing missing, half
+updated or left behind). First the real problems.
+Then look again as a demanding user who wants to enjoy this: what would make it feel more crafted or delightful
+(motion, feedback, atmosphere, a detail that surprises)? Only cheap, clearly better ideas.
+Write VISUAL_REVIEW.md (max 18 lines: page, problem or idea, why it matters). Append to TASKS.md in the same format
+(next free T number, milestone {ms}): one fix task per real problem, at most {max_tasks}, most serious first; then at
+most {max_polish} tasks whose description starts with "Polish:". Every accept command is a real check that fails today
+(build + a test for the structural cause or for the new detail existing).
+Accept commands are the bare command only - no explanation after it (put that in the description). Do not fix code yourself."""
 
 EXTEND_PROMPT = """You are the architect. This project already exists and works: read PLAN.md, TASKS.md (all done),
 the code and tests. Read {brief} - the brief for the next run.
@@ -1034,18 +1213,33 @@ the code and tests. Read {brief} - the brief for the next run.
    npm install/test/run, npx vitest, node, dotnet new/add/restore/build/test/ef/sln, dotnet tool restore,
    read-only git.
 Do NOT implement features. Plan everything the brief puts In scope, including what users see (design, states, phone
-layout) - not only logic unit tests cover. Be concise."""
+layout) - not only logic unit tests cover. Be concise. Apply these to the new work (append to the existing
+"Contracts" section, checks.json and visual.json; create them if missing):
+""" + WHOLE_PROGRAM_RULES.replace("{", "{{").replace("}", "}}")   # EXTEND_PROMPT goes through .format()
+
+HANDS_PROMPT = HANDS_PROMPT_TEMPLATE.replace("BROWSER_CHECK", BROWSER_CHECK)
 
 RESCUE_PROMPT = """Task {id} ({desc}) failed twice in earlier attempts; start fresh and read the failure carefully. Accept check: {accept}
 Last failure:
 {feedback}
 Fix it so the accept check passes. Do not weaken or edit existing tests. Keep the change minimal."""
 
+GATE_RED = """The whole-project checks are RED after {ms} (every test suite, plus smoke runs of the real program):
+{report}
+These come first. For each failure find in `git log` which task changed that behaviour. If the change was intended
+and the test is stale, add a fix task that names the test file path and the task that changed it (only then may it
+edit that test). If it is a regression, add a fix task for the code. The fix task's accept is the failing command."""
+GATE_GREEN = "The whole-project checks pass ({n} suite/smoke command(s))."
+GATE_NONE = "No whole-project checks ran (no .hybrid/checks.json, no suite detected) - say so in REVIEW.md."
+
 REVIEW_PROMPT = """Review milestone {ms}: run `git log --oneline` and `git diff` against the commit before {ms} started,
 and compare with PLAN.md and PROJECT_BRIEF.md. Check every `ASSUMPTION:` comment the workers left: a wrong one is
-a bug. Write REVIEW.md (bugs, risks, missing tests, max 15 lines).
+a bug. Check the contracts between modules (PLAN.md "Contracts"): a consumer that reads a field some producer
+never sets, a change applied to only some parts of a whole, a value shown in one place but not updated in another.
+{gate}
+Write REVIEW.md (bugs, risks, missing tests, max 15 lines).
 For each real bug, append a fix task to TASKS.md in the same format (next free T number, same milestone {ms},
-with an accept command that fails today). Do not install or change dependencies (node_modules/.venv are shared).
+with an accept command that fails today). Accept commands are the bare command only - no explanation after it (put that in the description). Do not install or change dependencies (node_modules/.venv are shared).
 If an existing test encodes the wrong behaviour, name that test file's
 path in the fix task text - only then may the fix task edit it. Do not fix code yourself."""
 
@@ -1058,6 +1252,8 @@ def main() -> None:
     ap.add_argument("--critique-only", action="store_true", help="write BRIEF_REVIEW.md (one brain call) and stop")
     ap.add_argument("--critique-after", type=int, metavar="SECONDS",
                     help="wait; if .hybrid/brief_answered does not appear, critique and notify via Telegram")
+    ap.add_argument("--prototype", action="store_true",
+                    help="before planning, let the local model build a free prototype that the plan must match")
     ap.add_argument("--extend", metavar="BRIEF",
                     help="next run of an existing project: append to PLAN.md/TASKS.md from this brief, then build")
     ap.add_argument("--brain", choices=["cloud", "local"],
@@ -1080,6 +1276,8 @@ def main() -> None:
         if not run.extend(a.extend):
             sys.exit(1)
     elif not a.build_only and not run.tasks():
+        if a.prototype and not run.prototype():
+            run.log("ORCH", "prototype failed - planning without it")
         if not run.plan():
             sys.exit(1)
     if not a.plan_only:

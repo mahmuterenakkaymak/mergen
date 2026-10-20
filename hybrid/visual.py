@@ -14,8 +14,13 @@ download) and reports page problems (HTTP errors, console errors, horizontal scr
   "widths": [390, 1366],                 # optional
   "login": {"path": "/Login", "user_field": "#Username", "password_field": "#Password",
             "submit": "button[type=submit]", "password_env": "APP_DEMO_PASSWORD"},   # optional
-  "pages": [{"name": "index", "path": "/"}, {"name": "student", "path": "/Student/1", "user": "ogrenci1"}]
+  "pages": [{"name": "index", "path": "/"}, {"name": "student", "path": "/Student/1", "user": "ogrenci1"},
+            {"name": "new-exam", "path": "/Exams", "steps": [{"click": "text=New"}, {"fill": ["#Title", ""]},
+             {"click": "button[type=submit]"}, "shot:empty-title", {"fill": ["#Title", "Exam 1"]},
+             {"click": "button[type=submit]"}]}]                          # steps: optional user flow
 }
+Pages with "steps" are user flows (2026-10-20): the start screen alone hid a game whose traffic had no car bodies.
+Step syntax is browser_check.run_step's; the page is shot after its steps, "shot:<name>" adds one mid-flow.
 """
 import json
 import os
@@ -23,6 +28,8 @@ import subprocess
 import time
 import urllib.request
 from pathlib import Path
+
+from browser_check import BROWSER_ARGS, run_step
 
 # --- config ----------------------------------------------------------------
 BROWSER_CHANNEL = "msedge"          # installed Edge; Playwright downloads nothing
@@ -78,7 +85,7 @@ def take_screens(root: Path, cfg: dict, out_dir: Path) -> tuple[list[Path], list
             return [], [f"app did not start within {READY_TIMEOUT_S}s: {cfg['start']}"]
         login = cfg.get("login")
         with sync_playwright() as pw:
-            browser = pw.chromium.launch(channel=BROWSER_CHANNEL, headless=True)
+            browser = pw.chromium.launch(channel=BROWSER_CHANNEL, headless=True, args=BROWSER_ARGS)   # WebGL too
             try:
                 for width in cfg.get("widths", DEFAULT_WIDTHS):
                     for page_cfg in cfg["pages"]:
@@ -102,6 +109,13 @@ def take_screens(root: Path, cfg: dict, out_dir: Path) -> tuple[list[Path], list
                             overflow = page.evaluate("document.documentElement.scrollWidth - window.innerWidth")
                             if overflow > 1:
                                 problems.append(f"{name}: horizontal scroll ({overflow}px wider than the screen)")
+                            if page_cfg.get("steps"):
+                                def shot(label, n=page_cfg["name"], w=width):
+                                    p = out_dir / f"{n}-{label}-{w}.png"
+                                    page.screenshot(path=str(p), full_page=True)
+                                    pngs.append(p)
+                                for step in page_cfg["steps"]:
+                                    run_step(page, step, shot)
                             png = out_dir / f"{name}.png"
                             page.screenshot(path=str(png), full_page=True)
                             pngs.append(png)
