@@ -1,0 +1,263 @@
+/* Page shell + HUD overlay. Values from prototype/index.html. */
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #0b1220;
+  font-family: "Segoe UI", system-ui, sans-serif;
+}
+canvas { display: block; }
+
+.hud {
+  position: fixed;
+  pointer-events: none;
+  user-select: none;
+  z-index: 5;
+  transition: opacity 0.4s ease;
+}
+
+/* the HUD sits under the translucent start scrim (z 5 < 10) and reads through it — it fades in with the game */
+body:not(.playing) .hud { opacity: 0; }
+
+/* in-game vignette: transparent center, darkened edges; sits below the HUD (z-index 5) */
+#vignette {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  background: radial-gradient(ellipse at center, transparent 55%, rgba(4, 8, 16, 0.55) 100%);
+}
+
+/* red damage flash: opacity is driven per frame by the HUD vignette amount */
+#vignetteRed {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  opacity: 0;
+  background: radial-gradient(ellipse at center, transparent 45%, rgba(255, 40, 24, 0.5) 100%);
+}
+
+/* rescue blackout: above the HUD (z 5) so the whole screen goes under it, below the start
+   scrim (z 10). Opacity is written every frame by the sim, so no transition here. */
+#fade {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 8;
+  opacity: 0;
+  background: #05070d;
+}
+
+/* pause dim: above the HUD and the rescue blackout (z 9), below the start scrim (z 10).
+   Its opacity is a class rather than a per-frame write like #fade, so the dim fades in and
+   the frozen town behind it defocuses instead of only darkening. */
+#pause {
+  position: fixed;
+  inset: 0;
+  z-index: 9;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  cursor: pointer;
+  color: #fff;
+  background: rgba(6, 11, 20, 0.62);
+  backdrop-filter: blur(3px);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s ease;
+}
+#pause.show { opacity: 1; pointer-events: auto; }
+/* text-indent pays back the trailing letter-spacing, so the word stays optically centred */
+#pauseTitle { font-size: 44px; font-weight: 900; letter-spacing: 12px; text-indent: 12px; text-shadow: 0 8px 34px rgba(0, 0, 0, 0.75); }
+#pauseSub { font-size: 12px; font-weight: 700; letter-spacing: 4px; color: #8fb3d9; text-shadow: 0 2px 10px rgba(0, 0, 0, 0.9); }
+
+#speedo {
+  right: 28px;
+  bottom: 22px;
+  text-align: right;
+  color: #fff;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
+}
+#speedNum {
+  font-size: 58px;
+  font-weight: 800;
+  letter-spacing: -2px;
+  font-variant-numeric: tabular-nums;
+}
+#speedUnit { font-size: 15px; font-weight: 600; opacity: 0.75; margin-left: 4px; }
+#gear { font-size: 14px; font-weight: 700; color: #ffd257; letter-spacing: 2px; }
+
+/* damage bar: bottom-centre — the minimap owns the bottom-left corner here */
+#dmgWrap { left: 50%; bottom: 26px; transform: translateX(-50%); width: 190px; }
+#dmgLabel { color: #fff; font-size: 11px; font-weight: 700; letter-spacing: 2px; opacity: 0.8; margin-bottom: 5px; text-shadow: 0 1px 4px rgba(0, 0, 0, 0.7); }
+#dmgBar { height: 9px; border-radius: 5px; background: rgba(255, 255, 255, 0.18); overflow: hidden; box-shadow: 0 1px 6px rgba(0, 0, 0, 0.4); }
+#dmgFill { height: 100%; width: 0%; border-radius: 5px; background: linear-gradient(90deg, #4ade80, #facc15, #ef4444); transition: width 0.25s; }
+
+#hint {
+  left: 28px;
+  top: 24px;
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 12px;
+  line-height: 1.9;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.8);
+}
+#hint b { color: #ffd257; font-weight: 700; }
+/* the strip fades once its ten seconds are up; F1 clears the class again (hud.js createHint) */
+#hint.gone { opacity: 0; }
+
+/* session top speed badge: above the speedometer, invisible until the car has moved,
+   amber while a new best is landing */
+#topSpeed {
+  right: 28px;
+  bottom: 118px;
+  text-align: right;
+  color: #8fb3d9;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.8);
+  opacity: 0;
+  transition: opacity 0.4s ease, color 0.3s ease;
+}
+#topSpeed.show { opacity: 1; }
+#topSpeed.record { color: #ffd257; }
+
+/* the canvas paints its own rounded translucent panel; CSS only places it */
+#minimap {
+  left: 28px;
+  bottom: 22px;
+}
+
+#toast {
+  left: 50%;
+  top: 15%;
+  transform: translateX(-50%);
+  color: #fff;
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.8);
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+#toast.show { opacity: 1; }
+
+/* ---------- Start screen ---------- */
+#start {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 26px;
+  cursor: pointer;
+  /* light enough that the lit town reads through the scrim; text contrast comes from text-shadows */
+  /* ASSUMPTION: no extra dark band behind the centre column — the existing text-shadows carry the contrast */
+  background: radial-gradient(ellipse at 50% 30%, rgba(17, 30, 50, 0.55) 0%, rgba(7, 12, 21, 0.85) 70%);
+  color: #fff;
+  transition: opacity 0.4s;
+}
+#start.hide { opacity: 0; pointer-events: none; }
+
+/* entrance: children fade up in reading order — title, subtitle, keys, footer.
+   Longhands only: the `animation` shorthand would carry `animation-delay: 0s` at
+   specificity 2,0,0 and beat the nth-child delays below. */
+#start > *:not(#go) {
+  animation-name: fadeUp;
+  animation-duration: 0.5s;
+  animation-timing-function: ease-out;
+  animation-fill-mode: both;
+}
+#start > *:nth-child(2) { animation-delay: 0.1s; }
+#start > *:nth-child(3) { animation-delay: 0.2s; }
+#start > *:nth-child(4) { animation-delay: 0.3s; } /* pill: pulse joins in with the rest of the stagger */
+#start > *:nth-child(5) { animation-delay: 0.4s; }
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+#start h1 {
+  margin: 0;
+  font-size: clamp(34px, 10.5vw, 76px);
+  font-weight: 900;
+  letter-spacing: clamp(2px, 1.1vw, 6px);
+  background: linear-gradient(180deg, #fff 20%, #ffd257 60%, #ff8f3d);
+  /* oversized on both axes: the drift below needs room to slide the gradient through the glyphs */
+  background-size: 200% 200%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  text-shadow: 0 10px 40px rgba(255, 160, 60, 0.25);
+  /* !important: the entrance rule above is #id + :not(#id) (2,0,0) and would otherwise keep
+     animation-name — fadeUp would loop forever and the drift never start. fadeUp is repeated
+     first so the staggered entrance still plays; h1 is nth-child(1), so the shorthand's
+     animation-delay: 0s has no nth-child delay to override. */
+  animation: fadeUp 0.5s ease-out both, titleDrift 7s ease-in-out infinite !important;
+}
+/* the wordmark keeps breathing after its entrance: the amber band rocks up and down */
+@keyframes titleDrift {
+  from { background-position: 50% 0%; }
+  50% { background-position: 50% 100%; }
+  to { background-position: 50% 0%; }
+}
+#start h2 { margin: -14px 0 0; font-size: clamp(11px, 3.4vw, 15px); font-weight: 600; letter-spacing: clamp(3px, 1.7vw, 8px); color: #8fb3d9; text-shadow: 0 2px 10px rgba(0, 0, 0, 0.85); }
+.keys { display: grid; grid-template-columns: 1fr; gap: 8px 26px; font-size: 15px; color: #cfe0f5; text-shadow: 0 1px 6px rgba(0, 0, 0, 0.85); }
+.keys kbd {
+  display: inline-block;
+  min-width: 26px;
+  text-align: center;
+  padding: 3px 8px;
+  margin-right: 8px;
+  border-radius: 6px;
+  background: #1e2f4a;
+  border: 1px solid #45608c;
+  border-bottom-width: 3px;
+  font-family: inherit;
+  font-weight: 700;
+  color: #ffd257;
+}
+/* pressed look while the matching key is held on the start screen: amber fill, cap sunk */
+.keys kbd.lit {
+  background: #ffd257;
+  color: #0b1220;
+  border-color: #ffe08a;
+  border-bottom-width: 1px;
+  transform: translateY(2px);
+}
+#go {
+  font-size: 19px;
+  font-weight: 800;
+  letter-spacing: 3px;
+  color: #0b1220;
+  background: #ffd257;
+  padding: 14px 44px;
+  border-radius: 999px;
+  box-shadow: 0 8px 30px rgba(255, 210, 87, 0.35);
+  /* no fadeUp here: a fill-both fade would leave the CTA at opacity 0 until its delay ends */
+  animation: pulse 1.6s infinite;
+  /* pulse owns `transform`, so the hover lift rides on the `translate` property instead */
+  transition: translate 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+}
+#go:hover {
+  background: #ffe08a;
+  box-shadow: 0 12px 38px rgba(255, 210, 87, 0.55);
+  translate: 0 -3px;
+}
+@keyframes pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.05); } }
+/* the footer sits on the darkest band of the scrim, so it needs both a light ink and a shadow to read */
+#start .foot { font-size: 12px; color: #a8c4e4; letter-spacing: 1px; text-shadow: 0 1px 8px rgba(0, 0, 0, 0.9); }
+/* the mouse parallax startScreen.js writes rides on `translate` (fadeUp/titleDrift own
+   `transform`); easing it here is what makes the layers trail the cursor instead of snapping */
+#start h1, #start h2, #start .keys { transition: translate 0.25s ease-out; }
+
+/* phone widths: the keycap grid is what overflows a 390px screen first */
+@media (max-width: 480px) {
+  #start { gap: 18px; }
+  .keys { grid-template-columns: 1fr; gap: 5px; font-size: 14px; }
+}

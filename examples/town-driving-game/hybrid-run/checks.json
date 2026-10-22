@@ -1,0 +1,1 @@
+{"suite": ["npx vitest run"], "smoke": ["npx vite build --logLevel error"]}

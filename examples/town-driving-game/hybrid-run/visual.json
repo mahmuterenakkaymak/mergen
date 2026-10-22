@@ -1,0 +1,10 @@
+{
+ "start": "npm run dev -- --port 5199 --strictPort",
+ "base_url": "http://localhost:5199",
+ "ready_path": "/",
+ "widths": [1366],
+ "pages": [
+  {"name": "start", "path": "/"},
+  {"name": "drive", "path": "/", "steps": ["click", "wait:2", "key:w:3", "shot:straight", "key:a:0.8", "wait:0.3"]}
+ ]
+}

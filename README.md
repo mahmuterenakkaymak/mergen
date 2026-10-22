@@ -27,10 +27,10 @@
 > ([aşağıda](#let-your-ai-set-it-up)). Gerçek sonuçlar, başarısızlıklar dahil: [docs/hybrid-results.md](docs/hybrid-results.md).
 
 <p align="center">
+  <img src="docs/img/town-driving-game-play.jpg" width="49%" alt="town driving game, built by the hybrid pipeline">
   <img src="docs/img/strike-arena-play.jpg" width="49%" alt="strike-arena, an FPS built by the hybrid pipeline">
-  <img src="docs/img/mode-panel.png" width="49%" alt="the AI Modes panel">
 </p>
-<p align="center"><sub>Left: <a href="examples/strike-arena">strike-arena</a>, a browser FPS the pipeline built (39 tasks, 535 tests). Right: the GPU mode panel.</sub></p>
+<p align="center"><sub>Built by the pipeline: <a href="examples/town-driving-game">a 3D driving game</a> (86 tasks, 570 tests) and <a href="examples/strike-arena">strike-arena</a>, a browser FPS (39 tasks, 535 tests).</sub></p>
 
 ---
 
@@ -41,7 +41,7 @@
   cannot undo. Reach it from the browser, by voice ("Mergen, ...") or from your phone over Telegram.
 - **A software pipeline that is honest about itself.** Ask for a program and a deterministic orchestrator runs it:
   Claude plans and reviews, the local model writes every task and its tests, nothing is committed unless its test
-  passes. See [what really happened](docs/hybrid-results.md) on five builds.
+  passes. See [what really happened](docs/hybrid-results.md) on six builds.
 - **Hybrid or fully local - your call.** Say *"tam local"* (fully local) and the local model also plans, reviews and
   rescues: no Claude account, no cloud calls, nothing leaves the PC
   ([modes](docs/hybrid-dev.md#brain-mode-cloud-or-fully-local)).
@@ -168,6 +168,12 @@ Workers follow a short change discipline (smallest complete change, touch only w
 writing, test-first for fixes) and, since nobody can answer questions at 3 a.m., leave `ASSUMPTION:` notes that the
 review checks. Python, JavaScript/TypeScript and .NET projects are supported.
 
+What it checks besides each task's own tests: after every milestone **all** test suites and smoke runs of the real
+program run (a later fix cannot silently break an older test), the app is started and its user flows are clicked and
+played in a headless browser for a **visual review** by the local model, and workers open the pages they build
+themselves. For games and UIs, `--prototype` first lets the local model build a free, rich sketch that the plan must
+match.
+
 **Two modes, one pipeline.** *Hybrid* (default): Claude is the brain, the local model the hands. *Fully local*
 (`--brain local`, or just say *"tam local"*): Strata is both, for private data or when you have no Claude account.
 All results below are hybrid runs; a fully local build has not been measured yet.
@@ -181,9 +187,12 @@ All results below are hybrid runs; a fully local build has not been measured yet
 | *Same game, written in one go without the pipeline* | - | - | 0 | ~2 min | - |
 | Driving game v2 (full scope) | 51 | 47/48 | 751 | 178 min | 6 |
 | [strike-arena FPS](examples/strike-arena) | 39 | **39/39** | 535 | 124 min | 10 |
+| [Driving game v3](examples/town-driving-game) (`--prototype`) | 86 | 78/86 | 570 | ~4 h 15 min | 16 + 21 visual |
 
-And the lesson that matters most: 535 green tests did not notice that strike-arena's menu never closed. Tests are not
-eyes - a screenshot step is next on the [roadmap](docs/roadmap.md).
+And the lessons that matter most: 535 green tests did not notice that strike-arena's menu never closed, and 570 did
+not notice traffic cars without bodies - one renderer read fields another module never set. Tests are not eyes, and
+green task tests are not a working whole: that is what the visual review and the whole-project checks are for. v3's
+8 first-try misses were the pipeline's own bug (a reviewer appended an explanation to accept commands), now caught.
 
 ## Speed
 

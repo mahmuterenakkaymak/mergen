@@ -1,0 +1,244 @@
+2026-10-20 10:20:19 | ORCH   | brain: cloud Claude (panel: cloud)
+2026-10-20 10:20:19 | HANDS  | free prototype (quality bar for the plan)
+2026-10-20 10:23:53 | ORCH   | brain: cloud Claude (panel: cloud)
+2026-10-20 10:23:53 | HANDS  | free prototype (quality bar for the plan)
+2026-10-20 10:27:44 | HANDS  | prototype done
+2026-10-20 10:27:56 | BRAIN  | planning with opus
+2026-10-20 10:31:57 | BRAIN  | plan done: 49 tasks
+2026-10-20 10:32:02 | HANDS  | T01 try 1: src/config.js: single frozen CONFIG with every tunable from the prototype (seed 20261020, grid 6, block 54, road 14, wall 3, car accel/brake/reverseMax/maxSpeed/drag/rollResist/steerMax/steerSpeed/refSpeed/grip/handGrip/handDrag/radius, cam dist/min/max/pitch0/height/fov 62-73, traffic count 14, peds 26, fx pool sizes, audio volumes, palette/colors) + tests
+2026-10-20 10:34:23 | ORCH   | T01: PASSED (hands)
+2026-10-20 10:34:23 | HANDS  | T02 try 1: src/util/math.js: clamp, lerp, damp(a,b,k,dt) using 1-exp(-k*dt), wrapAngle, angLerp (shortest arc) + tests
+2026-10-20 10:36:22 | ORCH   | T02: PASSED (hands)
+2026-10-20 10:36:22 | HANDS  | T03 try 1: src/util/rng.js: mulberry32 + createRng(seed) with float/range/int/pick and fork(label) giving independent deterministic streams + tests (same seed same sequence, forks independent)
+2026-10-20 10:37:22 | ORCH   | T03: PASSED (hands)
+2026-10-20 10:37:22 | HANDS  | T04 try 1: src/input.js pure part: createInputState, keyDown/keyUp by e.code (WASD+arrows, Space, H, R, P, Esc, F1), edge-triggered pressed set consumed per frame, toControls -> {throttle, brake, steer, handbrake}, drag deltas -> yaw/pitch, wheel -> zoom delta, clearAll + tests
+2026-10-20 10:39:05 | ORCH   | T04: PASSED (hands)
+2026-10-20 10:39:06 | HANDS  | T05 try 1: src/input.js attachInput(target, state): keydown/keyup (preventDefault for arrows/space), pointerdown/move/up drag, wheel, window blur clears held keys (no stuck keys), returns detach() + tests using Node EventTarget/Event
+2026-10-20 10:41:07 | ORCH   | T05: PASSED (hands)
+2026-10-20 10:41:07 | HANDS  | T06 try 1: src/car.js createCar(spawn) + stepCar throttle: accel along heading, drag + rolling resistance, gradual coast decay, snap to 0 below 0.4 m/s with no input, maxSpeed respected + tests (0->max in 3-4 s, release decays gradually)
+2026-10-20 10:45:32 | ORCH   | T06: PASSED (hands)
+2026-10-20 10:45:32 | HANDS  | T07 try 1: src/car.js brake-then-reverse (reverse max < forward max), speed-dependent turn authority min(1,|v|/refSpeed), smoothed steer angle, reverse steering sign + tests (no pivot at standstill, A/D mirror)
+2026-10-20 10:48:05 | ORCH   | T07: PASSED (hands)
+2026-10-20 10:48:05 | HANDS  | T08 try 1: src/car.js handbrake: lowered lateral grip, extra drag, extra yaw (drift); expose slip (lateral speed) and skidding flag; frame-rate independence + tests (60 Hz vs 144 Hz within 2%, handbrake slip > normal slip)
+2026-10-20 10:51:16 | ORCH   | T08: PASSED (hands)
+2026-10-20 10:51:17 | HANDS  | T09 try 1: src/camera.js pure chase-orbit: createCamState, applyOrbit(drag/zoom with pitch/dist clamps), yaw relative to car heading that eases back behind the car 1.5 s after drag ends, computePose(target) with exp follow and y >= 0.9 + tests (never below ground, drag rotates)
+2026-10-20 10:53:43 | ORCH   | T09: PASSED (hands)
+2026-10-20 10:53:43 | HANDS  | T10 try 1: src/camera.js FOV widening 62->73 with speed ratio + decaying screen shake (addShake, seeded jitter offset, exp decay) + tests
+2026-10-20 10:56:11 | ORCH   | T10: PASSED (hands)
+2026-10-20 10:56:12 | HANDS  | T11 try 1: src/render/carMesh.js buildCarMesh(color): metallic body, dark glass cabin, bumpers, headlights, tail lights, 4 wheels with 2 front steer pivots, cast shadows; updateCarMesh(mesh, car, dt): position, heading, wheel spin by ground speed, steer angle, brake lights glow when braking, paint darkens with damage + tests (structure, wheel count, brake color change)
+2026-10-20 10:58:37 | ORCH   | T11: PASSED (hands)
+2026-10-20 10:58:38 | HANDS  | T12 try 1: src/render/scene.js createScene(): canvas-gradient sky dome (skip texture if no document), fog matched to horizon, hemisphere light, warm shadowed sun (2048 map), asphalt ground + grass beyond; followSun(scene, target) + tests (fog/lights present, sun follows target)
+2026-10-20 11:01:02 | ORCH   | T12: PASSED (hands)
+2026-10-20 11:01:03 | HANDS  | T13 try 1: src/hud/format.js pure: toKmh, gearLetter (D/R from forward velocity and brake input), damagePct, tweenNumber + tests
+2026-10-20 11:02:50 | ORCH   | T13: PASSED (hands)
+2026-10-20 11:02:51 | HANDS  | T14 try 1: src/hud/hud.js + src/style.css: speedometer (big tabular km/h + gear letter), controls hint strip, toast element; pure toast queue (show msg for N s, fade, next) + createHud(doc) DOM builder + tests of the toast queue and that createHud is exported
+2026-10-20 11:04:30 | ORCH   | T14: PASSED (hands)
+2026-10-20 11:04:31 | HANDS  | T15 try 1: src/audio/engineModel.js pure: engineParams(speedRatio, load, slip) -> {freq 46-196 Hz, subFreq, cutoff, gain, squealGain}, thudParams(impact), HORN spec (392/494 Hz two-tone) + tests (monotonic pitch, squeal 0 without slip)
+2026-10-20 11:05:58 | ORCH   | T15: PASSED (hands)
+2026-10-20 11:05:59 | HANDS  | T16 try 1: src/audio/audio.js createAudio(): lazy init on gesture, dual-oscillator engine through lowpass, looping noise -> bandpass tire squeal, thud(impact), horn(pitch), setEngine(params), suspend/resume; every method a safe no-op when AudioContext missing + tests (no-op object in Node, fake-context smoke)
+2026-10-20 11:08:13 | ORCH   | T16: PASSED (hands)
+2026-10-20 11:08:13 | HANDS  | T17 try 1: src/ui/startScreen.js: gradient title, subtitle with seed, keycap control grid, pulsing CLICK TO DRIVE pill, footer; pure attractPose(t, center) slow orbit; onStart callback + tests (attractPose orbits center at fixed height, module exports)
+2026-10-20 11:10:49 | ORCH   | T17: PASSED (hands)
+2026-10-20 11:10:50 | HANDS  | T18 try 1: src/game.js createGame(cfg) + stepGame(world, controls, dt): car + camera state, dt clamp 0.05, events array cleared each step (horn on H edge) + tests (driving forward moves car, horn event emitted once per press)
+2026-10-20 11:12:56 | ORCH   | T18: PASSED (hands)
+2026-10-20 11:12:57 | HANDS  | T19 try 1: index.html + src/main.js wiring: renderer (antialias, pixelRatio<=2, sRGB, soft shadows), RAF loop, resize, start screen -> audio init, input -> stepGame -> car mesh, camera, HUD, engine/squeal audio; playable on an empty plane
+2026-10-20 11:15:59 | ORCH   | T19: PASSED (hands)
+2026-10-20 11:15:59 | ORCH   | M1: screenshots for the visual review
+2026-10-20 11:16:02 | ORCH   | M1: page problem: game-1366: console error: Failed to load resource: the server responded with a status of 404 (Not Found)
+2026-10-20 11:16:02 | BRAIN  | M1: visual review with local Strata (1 screenshots)
+2026-10-20 11:17:43 | BRAIN  | M1: visual review done - 5 fix task(s) added
+2026-10-20 11:18:07 | BRAIN  | M1: review with sonnet in the background - hands keep building
+2026-10-20 11:18:08 | HANDS  | T50 try 1: src/style.css: make the #start overlay a translucent scrim (rgba color stops in its radial-gradient, dark enough to keep text contrast) so the attract-orbit canvas — car, ground, sky — is visible behind the start screen
+2026-10-20 11:19:09 | ORCH   | T50: PASSED (hands)
+2026-10-20 11:19:10 | HANDS  | T51 try 1: index.html: declare a favicon (inline data-URI link rel="icon", e.g. a small amber steering-wheel or "TD" SVG) so the browser's automatic /favicon.ico request stops 404ing in the console
+2026-10-20 11:20:12 | ORCH   | T51: PASSED (hands)
+2026-10-20 11:20:13 | HANDS  | T52 try 1: src/style.css: start screen fits 390px — clamp() font-size/letter-spacing on #start h1 and h2, @media (max-width: 480px) collapsing .keys to one column and shrinking the gap so nothing overflows the viewport
+2026-10-20 11:21:10 | ORCH   | T52: PASSED (hands)
+2026-10-20 11:21:10 | BRAIN  | M1: review merged - 4 fix task(s) added
+2026-10-20 11:21:18 | HANDS  | T53 try 1: Polish: start screen entrance + feedback — fadeUp keyframe applied to #start children with staggered animation-delay (title → subtitle → keys → pill → footer) and a #go:hover state (brighter bg, slight lift) so the pill answers the cursor before the click
+2026-10-20 11:24:16 | ORCH   | T53: PASSED (hands)
+2026-10-20 11:24:17 | HANDS  | T54 try 1: Polish: in-game vignette — #vignette fixed div (pointer-events none, z-index below HUD) with a transparent-center radial darkening at the edges, created by createHud, for atmosphere over the empty plane
+2026-10-20 11:25:49 | ORCH   | T54: PASSED (hands)
+2026-10-20 11:25:50 | HANDS  | T55 try 1: Bug (review): src/car.js 0 -> maxSpeed takes 2.77 s, brief test 3 and T06 say 3-4 s; the ASSUMPTION "drag is coast-only" gives constant 10.5 m/s^2 up to a hard clamp. Keep CONFIG.car.accel = 10.5 (tests/config.test.js pins it) and fix by tapering throttle acceleration toward maxSpeed (e.g. accel * (1 - (|v|/maxSpeed)^k)) or equivalent so full throttle reaches maxSpeed in 3.0-4.0 s at both 60 Hz and 144 Hz without exceeding it. tests/car.test.js encodes the wrong behaviour (lower bound `toBeGreaterThanOrEqual(2.5)` in 'goes 0 -> maxSpeed in 3-4 s') and may be edited to 3.0; also drop the stale ASSUMPTION comment
+2026-10-20 11:28:26 | ORCH   | T55: PASSED (hands)
+2026-10-20 11:28:27 | HANDS  | T56 try 1: Bug (review): tire squeal sounds on ordinary cornering. src/main.js passes slip/6 straight into engineParams, so any lateral slip (e.g. 2 m/s while steering at speed) is audible, while the prototype only squeals when skidding (`skidding ? clamp(slip/8,0,1) : 0`) and the main.js ASSUMPTION claims the opposite. Add pure `squealLevel(slip, skidding)` to src/audio/engineModel.js (0 when not skidding, else clamp(slip/8, 0, 1)) and use it in src/main.js
+2026-10-20 11:29:30 | ORCH   | T56: PASSED (hands)
+2026-10-20 11:29:31 | HANDS  | T57 try 1: Bug (review): car brake lights never light in the game. src/render/carMesh.js reads car.braking and its ASSUMPTION says the view layer sets it, but neither src/car.js nor src/main.js sets it, so tail lights stay dark (T11 requires a brake glow). Make stepCar set car.braking = true when controls.brake > 0 and forward speed > 0.5 (false otherwise, also initialised false in createCar)
+2026-10-20 11:30:43 | ORCH   | T57: PASSED (hands)
+2026-10-20 11:30:44 | HANDS  | T58 try 1: Bug (review): src/input.js attachInput onBlur only calls clearAll, the closure flag `dragging` stays true, so after alt-tab mid-drag plain mouse movement keeps orbiting the camera until the next pointerup. Reset `dragging = false` in onBlur
+2026-10-20 11:31:33 | ORCH   | T58: PASSED (hands)
+2026-10-20 11:31:34 | HANDS  | T20 try 1: src/town.js generateTown(seed, cfg) part 1: road center lines, blocks with sidewalk rects, ~16% parks, world bounds, spawn point on a road + tests (same seed identical JSON, other seed differs, spawn on road)
+2026-10-20 11:33:35 | ORCH   | T20: PASSED (hands)
+2026-10-20 11:33:37 | HANDS  | T21 try 1: src/town.js buildings: 2x2 lots per block, randomized footprint inside lot margins, height by distance to centre (downtown towers 18-42, mid 9-26, edge 6-15), facade index, empty lots become trees; parks get trees + optional pond + tests (no building overlaps a road or another building, downtown taller on average)
+2026-10-20 11:37:10 | ORCH   | T21: PASSED (hands)
+2026-10-20 11:37:12 | HANDS  | T22 try 1: src/town.js props + colliders: streetlights at every intersection corner, road dash positions, aabbs list (buildings + tree trunks) + tests (counts, every tree/building has an aabb, lights off the driving lanes)
+2026-10-20 11:39:37 | ORCH   | T22: PASSED (hands)
+2026-10-20 11:39:38 | HANDS  | T23 try 1: src/collision.js resolveCircleAabb(pos, vel, r, box): closest-point push-out, remove only into-wall velocity (slide), centre-inside fallback along smallest axis, returns {impact, contact, normal} + tests
+2026-10-20 11:41:59 | ORCH   | T23: PASSED (hands)
+2026-10-20 11:42:00 | HANDS  | T24 try 1: src/collision.js clampToBounds, resolveCircleCircle (mass-split push + relative normal speed), resolveWorld with substeps so one step moves <= r/2 + tests (no tunnelling at maxSpeed with dt 0.05)
+2026-10-20 11:46:17 | ORCH   | T24: PASSED (hands)
+2026-10-20 11:46:19 | HANDS  | T25 try 1: src/game.js integrate town + collision into stepGame (car spawns at town spawn, impact event with speed + contact) + tests (full-speed into a building stops at the face; 200 seeded random-input runs never end inside a box or outside bounds)
+2026-10-20 11:49:56 | ORCH   | T25: PASSED (hands)
+2026-10-20 11:49:57 | HANDS  | T26 try 1: src/render/textures.js facadeSpec(rng, baseColor) pure (window grid 4x8, seeded lit flags ~28%, floor lines) + makeFacadeTexture / makeStripeTexture (red/white wall) using canvas when document exists + tests (deterministic spec)
+2026-10-20 11:52:39 | ORCH   | T26: PASSED (hands)
+2026-10-20 11:52:40 | HANDS  | T27 try 1: src/render/townMeshes.js buildTownMeshes(town, textures): instanced sidewalks, buildings as one InstancedMesh per facade, instanced roof caps, park lawns, ponds, instanced dashes, trees (trunk + cone), streetlights (pole + glowing head), striped perimeter walls; shadows set + tests (instance counts match town, < 40 draw objects)
+2026-10-20 11:55:57 | ORCH   | T27: PASSED (hands)
+2026-10-20 11:55:59 | HANDS  | T28 try 1: src/main.js: render the generated town, start screen attract orbit over town centre, sun follows car
+2026-10-20 11:58:17 | ORCH   | T28: PASSED (hands)
+2026-10-20 11:58:17 | ORCH   | M2: screenshots for the visual review
+2026-10-20 11:58:20 | BRAIN  | M2: visual review with local Strata (1 screenshots)
+2026-10-20 12:04:43 | BRAIN  | M2: visual review done - 6 fix task(s) added
+2026-10-20 12:05:11 | BRAIN  | M2: review with sonnet in the background - hands keep building
+2026-10-20 12:05:13 | HANDS  | T59 try 1: Bug (visual): the entrance animation hides the CTA. `#start > *:not(#go)` (specificity 2,0,0) sets the `animation` shorthand, whose animation-delay:0s beats the `#start > *:nth-child(n)` delay rules (1,1,0) — so the stagger never runs for any child, while #go (matched only by #go 1,0,0 vs nth-child(4) 1,1,0) keeps delay 0.3s + fill `both` and is the ONLY element that fades in, starting at opacity 0; the M2 screenshot catches CLICK TO DRIVE dark and a click in the first 0.3s sees no CTA. In src/style.css use longhands (animation-name/-duration/-timing-function/-fill-mode) in the #start children rule so the nth-child delays survive, and make #go fully visible from the first frame (drop fadeUp from #go — keep `pulse 1.6s infinite` — or animate only translate)
+2026-10-20 12:07:41 | HANDS  | T59 try 2: Bug (visual): the entrance animation hides the CTA. `#start > *:not(#go)` (specificity 2,0,0) sets the `animation` shorthand, whose animation-delay:0s beats the `#start > *:nth-child(n)` delay rules (1,1,0) — so the stagger never runs for any child, while #go (matched only by #go 1,0,0 vs nth-child(4) 1,1,0) keeps delay 0.3s + fill `both` and is the ONLY element that fades in, starting at opacity 0; the M2 screenshot catches CLICK TO DRIVE dark and a click in the first 0.3s sees no CTA. In src/style.css use longhands (animation-name/-duration/-timing-function/-fill-mode) in the #start children rule so the nth-child delays survive, and make #go fully visible from the first frame (drop fadeUp from #go — keep `pulse 1.6s infinite` — or animate only translate)
+2026-10-20 12:08:31 | BRAIN  | T59: rescue with sonnet
+2026-10-20 12:09:20 | ORCH   | T59: FAILED - left open
+2026-10-20 12:09:27 | BRAIN  | M2: review merged - 4 fix task(s) added
+2026-10-20 12:09:33 | HANDS  | T60 try 1: Bug (visual): the town behind the start scrim is unreadable — #start's radial-gradient stops rgba(17,30,50,0.78) → rgba(7,12,21,0.94) turn the attract orbit into a dark blur (lit windows, parks, dashes invisible), so the first screen shows no reason to drive. Lower the scrim in src/style.css (first stop alpha ≤ 0.6, last ≤ 0.88); text keeps contrast via existing text-shadows, optionally a tighter dark band behind the centre column
+2026-10-20 12:10:31 | HANDS  | T60 try 2: Bug (visual): the town behind the start scrim is unreadable — #start's radial-gradient stops rgba(17,30,50,0.78) → rgba(7,12,21,0.94) turn the attract orbit into a dark blur (lit windows, parks, dashes invisible), so the first screen shows no reason to drive. Lower the scrim in src/style.css (first stop alpha ≤ 0.6, last ≤ 0.88); text keeps contrast via existing text-shadows, optionally a tighter dark band behind the centre column
+2026-10-20 12:11:14 | BRAIN  | T60: rescue with sonnet
+2026-10-20 12:12:04 | ORCH   | T60: FAILED - left open
+2026-10-20 12:12:12 | HANDS  | T61 try 1: Bug (visual): the HUD bleeds through the start scrim — "0 KM/H" + gear "D" and the hint strip render behind the menu (z 5 < 10, translucent scrim), reading as a broken state and duplicating the keycap grid. Hide the HUD until the game starts: CSS `body:not(.playing) .hud { opacity: 0 }` (transition ok) and src/main.js adds the `playing` class to document.body in the start handler
+2026-10-20 12:13:06 | HANDS  | T61 try 2: Bug (visual): the HUD bleeds through the start scrim — "0 KM/H" + gear "D" and the hint strip render behind the menu (z 5 < 10, translucent scrim), reading as a broken state and duplicating the keycap grid. Hide the HUD until the game starts: CSS `body:not(.playing) .hud { opacity: 0 }` (transition ok) and src/main.js adds the `playing` class to document.body in the start handler
+2026-10-20 12:13:54 | BRAIN  | T61: rescue with sonnet
+2026-10-20 12:14:19 | ORCH   | T61: FAILED - left open
+2026-10-20 12:14:27 | HANDS  | T62 try 1: Bug (visual): the UI advertises features M2 does not have — the "R reset &amp; repair" keycap (src/ui/startScreen.js) and hint "R reset" (src/hud/hud.js) do nothing (nothing consumes the KeyR edge until T39), and the footer claims "traffic and pedestrians are live" (M3). Remove the R keycap, the "R reset" hint segment and the traffic/pedestrians claim until their tasks land (re-add the keycap in T39); keep "same town every run"
+2026-10-20 12:15:28 | HANDS  | T62 try 2: Bug (visual): the UI advertises features M2 does not have — the "R reset &amp; repair" keycap (src/ui/startScreen.js) and hint "R reset" (src/hud/hud.js) do nothing (nothing consumes the KeyR edge until T39), and the footer claims "traffic and pedestrians are live" (M3). Remove the R keycap, the "R reset" hint segment and the traffic/pedestrians claim until their tasks land (re-add the keycap in T39); keep "same town every run"
+2026-10-20 12:16:16 | BRAIN  | T62: rescue with sonnet
+2026-10-20 12:16:40 | ORCH   | T62: FAILED - left open
+2026-10-20 12:16:48 | HANDS  | T63 try 1: Polish: the attract orbit circles the town centre while the car spawns ~29 m off-centre, so the player never sees the car they will drive (a few pixels in the M2 shot). In src/main.js pass the town spawn ({x, z} of world.town.spawn) as the attractPose centre instead of townCentre(world.town)
+2026-10-20 12:17:51 | HANDS  | T63 try 2: Polish: the attract orbit circles the town centre while the car spawns ~29 m off-centre, so the player never sees the car they will drive (a few pixels in the M2 shot). In src/main.js pass the town spawn ({x, z} of world.town.spawn) as the attractPose centre instead of townCentre(world.town)
+2026-10-20 12:18:34 | BRAIN  | T63: rescue with sonnet
+2026-10-20 12:18:59 | ORCH   | T63: FAILED - left open
+2026-10-20 12:19:04 | HANDS  | T64 try 1: Polish: the ~28% lit windows painted into the facade texture (facadeSpec) render as pale smudges because the building material is map-only — set emissiveMap to the facade texture, emissive white, emissiveIntensity ~0.5 on the building materials in src/render/townMeshes.js so the town looks inhabited behind the start screen and at dusk
+2026-10-20 12:20:50 | HANDS  | T64 try 2: Polish: the ~28% lit windows painted into the facade texture (facadeSpec) render as pale smudges because the building material is map-only — set emissiveMap to the facade texture, emissive white, emissiveIntensity ~0.5 on the building materials in src/render/townMeshes.js so the town looks inhabited behind the start screen and at dusk
+2026-10-20 12:21:35 | BRAIN  | T64: rescue with sonnet
+2026-10-20 12:22:02 | ORCH   | T64: FAILED - left open
+2026-10-20 12:22:10 | HANDS  | T65 try 1: Bug (review): tests/game.test.js fails (4 tests: 'starts parked at the origin...', 'throttle drives the car forward along its heading', 'stays parked with no input', 'clamps dt to 0.05 s...'). They encode the old T18 origin spawn, but T25 spawns the car at world.town.spawn. That test file encodes the wrong behaviour and may be edited: measure displacement relative to world.town.spawn (x/z and heading) instead of 0,0, keep every other assertion
+2026-10-20 12:23:17 | ORCH   | T65: PASSED (hands)
+2026-10-20 12:23:19 | HANDS  | T66 try 1: Bug (review): src/town.js spawn ASSUMPTION "right lane" is wrong. Heading 0 faces +z and screen-right is -x, but spawn.x = rc(mid) + road/4 puts the car in the LEFT lane (M3 traffic T33 drives the right lane, so the player would start head-on). Use rc(mid) - cfg.road/4 and fix the comment
+2026-10-20 12:24:10 | HANDS  | T66 try 2: Bug (review): src/town.js spawn ASSUMPTION "right lane" is wrong. Heading 0 faces +z and screen-right is -x, but spawn.x = rc(mid) + road/4 puts the car in the LEFT lane (M3 traffic T33 drives the right lane, so the player would start head-on). Use rc(mid) - cfg.road/4 and fix the comment
+2026-10-20 12:24:45 | BRAIN  | T66: rescue with sonnet
+2026-10-20 12:25:19 | ORCH   | T66: FAILED - left open
+2026-10-20 12:25:27 | HANDS  | T67 try 1: Bug (review): src/game.js pushes an `impact` event every frame the car grinds against a wall (throttle held into a face: stepCar adds ~0.2 m/s per step, resolveWorld removes it, hit.impact > 0). Once T34/T40 wire thud, sparks and damage this machine-guns. Only emit the event when hit.impact >= a named constant MIN_IMPACT = 1 (m/s) at the top of game.js
+2026-10-20 12:26:50 | HANDS  | T67 try 2: Bug (review): src/game.js pushes an `impact` event every frame the car grinds against a wall (throttle held into a face: stepCar adds ~0.2 m/s per step, resolveWorld removes it, hit.impact > 0). Once T34/T40 wire thud, sparks and damage this machine-guns. Only emit the event when hit.impact >= a named constant MIN_IMPACT = 1 (m/s) at the top of game.js
+2026-10-20 12:27:34 | BRAIN  | T67: rescue with sonnet
+2026-10-20 12:27:39 | BRAIN  | cloud budget of 10 calls used - local Strata is the brain for the rest of this run
+2026-10-20 12:31:27 | ORCH   | rescue: new memory note hybrid_accept_cmd_pitfall.md - In the hybrid pipeline, an accept check can fail with \"The system cannot find the file specified.\" purely because the accept text has shell metacharacters — check the harness before hunting a code bug
+2026-10-20 12:31:34 | ORCH   | T67: FAILED - left open
+2026-10-20 12:31:40 | HANDS  | T68 try 1: Bug (review): hitting the perimeter wall is silent. clampToBounds returns true but game.js only zeroes the outward velocity; no `impact` event, so no thud, sparks or damage at the outer wall (the brief's wall stop applies to every solid). In stepGame, when the bounds clamp removes outward speed >= MIN_IMPACT (T67), push { type: 'impact', speed, contact } with contact on the wall face
+2026-10-20 12:33:35 | ORCH   | T68: PASSED (hands)
+2026-10-20 12:33:37 | HANDS  | T29 try 1: src/damage.js applyImpact(state, impact): threshold 6 m/s, damage scale, clamp 0-100, shake + vignette amounts, overheating warning once when crossing 60, smoking flag > 60, repair() + tests
+2026-10-20 12:35:29 | ORCH   | T29: PASSED (hands)
+2026-10-20 12:35:31 | HANDS  | T30 try 1: src/fx/particles.js pure ring-buffer pool (spawn, step with gravity + lifetime, dead parked offscreen) + burstSparks(n) and puffSmoke presets + tests
+2026-10-20 12:38:11 | ORCH   | T30: PASSED (hands)
+2026-10-20 12:38:13 | HANDS  | T31 try 1: src/fx/skids.js ring buffer (500) of skid quads; emitSkids(car) at both rear wheels when skidding; oldest overwritten + tests
+2026-10-20 12:40:00 | ORCH   | T31: PASSED (hands)
+2026-10-20 12:40:02 | HANDS  | T32 try 1: src/fx/fxView.js: Points view for particles (vertex colours, no depth write), InstancedMesh view for skids (translucent, slightly above road), sync functions + tests (buffer sizes match pools, sync copies positions)
+2026-10-20 12:42:37 | ORCH   | T32: PASSED (hands)
+2026-10-20 12:42:39 | HANDS  | T33 try 1: src/traffic.js makeTraffic(rng, town): 14 cars on block-perimeter loops in the right lane; stepTraffic: waypoint follow, smooth heading via angLerp, yield (stop) when player is in an 11 m forward cone, resume after + tests
+2026-10-20 12:45:59 | ORCH   | T33: PASSED (hands)
+2026-10-20 12:46:01 | HANDS  | T34 try 1: src/game.js traffic vs player: circle-circle push, damage + shake + sparks + thud event when relative speed > 5, hit car stops + tests
+2026-10-20 12:51:36 | ORCH   | T34: PASSED (hands)
+2026-10-20 12:51:38 | HANDS  | T35 try 1: src/peds.js makePeds(rng, town): 26 walkers on sidewalk edges; stepPeds: walk back and forth, bounce at block ends, walk phase; panic flee (faster, away from car) when clipped, pushed out of car radius, stay in bounds; watchOut event + tests
+2026-10-20 12:56:52 | ORCH   | T35: PASSED (hands)
+2026-10-20 12:56:54 | HANDS  | T36 try 1: src/render/actorMeshes.js: pedestrian mesh (capsule torso, head, two legs) with leg swing + bob update; traffic car pool built with buildCarMesh in palette colours + tests
+2026-10-20 12:59:51 | ORCH   | T36: PASSED (hands)
+2026-10-20 12:59:53 | HANDS  | T37 try 1: src/hud/minimap.js: pure worldToMap transform, static layer (roads, parks, buildings) drawn once to an offscreen canvas, per-frame player arrow rotated by heading + red traffic dots + ped dots, rounded translucent panel + tests (transform corners, arrow angle)
+2026-10-20 13:02:08 | ORCH   | T37: PASSED (hands)
+2026-10-20 13:02:10 | HANDS  | T38 try 1: src/hud/hud.js damage bar (green->red gradient), red vignette that decays, pure eventsToHud mapping (impact -> vignette, overheat/watchOut/reset -> toasts, watchOut throttled to one per 3 s) + tests
+2026-10-20 13:05:39 | ORCH   | T38: PASSED (hands)
+2026-10-20 13:05:41 | HANDS  | T39 try 1: src/game.js reset on R: car back to spawn, zero velocity, repair damage, reset event (toast RESET — REPAIRED) + tests
+2026-10-20 13:07:58 | ORCH   | brain: cloud Claude (panel: cloud)
+2026-10-20 13:08:00 | HANDS  | T59 try 1: Bug (visual): the entrance animation hides the CTA. `#start > *:not(#go)` (specificity 2,0,0) sets the `animation` shorthand, whose animation-delay:0s beats the `#start > *:nth-child(n)` delay rules (1,1,0) — so the stagger never runs for any child, while #go (matched only by #go 1,0,0 vs nth-child(4) 1,1,0) keeps delay 0.3s + fill `both` and is the ONLY element that fades in, starting at opacity 0; the M2 screenshot catches CLICK TO DRIVE dark and a click in the first 0.3s sees no CTA. In src/style.css use longhands (animation-name/-duration/-timing-function/-fill-mode) in the #start children rule so the nth-child delays survive, and make #go fully visible from the first frame (drop fadeUp from #go — keep `pulse 1.6s infinite` — or animate only translate)
+2026-10-20 13:09:38 | ORCH   | T59: PASSED (hands)
+2026-10-20 13:09:41 | HANDS  | T60 try 1: Bug (visual): the town behind the start scrim is unreadable — #start's radial-gradient stops rgba(17,30,50,0.78) → rgba(7,12,21,0.94) turn the attract orbit into a dark blur (lit windows, parks, dashes invisible), so the first screen shows no reason to drive. Lower the scrim in src/style.css (first stop alpha ≤ 0.6, last ≤ 0.88); text keeps contrast via existing text-shadows, optionally a tighter dark band behind the centre column
+2026-10-20 13:11:11 | ORCH   | T60: PASSED (hands)
+2026-10-20 13:11:14 | HANDS  | T61 try 1: Bug (visual): the HUD bleeds through the start scrim — "0 KM/H" + gear "D" and the hint strip render behind the menu (z 5 < 10, translucent scrim), reading as a broken state and duplicating the keycap grid. Hide the HUD until the game starts: CSS `body:not(.playing) .hud { opacity: 0 }` (transition ok) and src/main.js adds the `playing` class to document.body in the start handler
+2026-10-20 13:12:20 | ORCH   | T61: PASSED (hands)
+2026-10-20 13:12:22 | HANDS  | T62 try 1: Bug (visual): the UI advertises features M2 does not have — the "R reset &amp; repair" keycap (src/ui/startScreen.js) and hint "R reset" (src/hud/hud.js) do nothing (nothing consumes the KeyR edge until T39), and the footer claims "traffic and pedestrians are live" (M3). Remove the R keycap, the "R reset" hint segment and the traffic/pedestrians claim until their tasks land (re-add the keycap in T39); keep "same town every run"
+2026-10-20 13:13:12 | ORCH   | T62: PASSED (hands)
+2026-10-20 13:13:14 | HANDS  | T63 try 1: Polish: the attract orbit circles the town centre while the car spawns ~29 m off-centre, so the player never sees the car they will drive (a few pixels in the M2 shot). In src/main.js pass the town spawn ({x, z} of world.town.spawn) as the attractPose centre instead of townCentre(world.town)
+2026-10-20 13:14:59 | ORCH   | T63: PASSED (hands)
+2026-10-20 13:15:01 | HANDS  | T64 try 1: Polish: the ~28% lit windows painted into the facade texture (facadeSpec) render as pale smudges because the building material is map-only — set emissiveMap to the facade texture, emissive white, emissiveIntensity ~0.5 on the building materials in src/render/townMeshes.js so the town looks inhabited behind the start screen and at dusk
+2026-10-20 13:16:20 | ORCH   | T64: PASSED (hands)
+2026-10-20 13:16:23 | HANDS  | T66 try 1: Bug (review): src/town.js spawn ASSUMPTION "right lane" is wrong. Heading 0 faces +z and screen-right is -x, but spawn.x = rc(mid) + road/4 puts the car in the LEFT lane (M3 traffic T33 drives the right lane, so the player would start head-on). Use rc(mid) - cfg.road/4 and fix the comment
+2026-10-20 13:17:08 | ORCH   | T66: PASSED (hands)
+2026-10-20 13:17:10 | HANDS  | T67 try 1: Bug (review): src/game.js pushes an `impact` event every frame the car grinds against a wall (throttle held into a face: stepCar adds ~0.2 m/s per step, resolveWorld removes it, hit.impact > 0). Once T34/T40 wire thud, sparks and damage this machine-guns. Only emit the event when hit.impact >= a named constant MIN_IMPACT = 1 (m/s) at the top of game.js
+2026-10-20 13:17:54 | ORCH   | T67: PASSED (hands)
+2026-10-20 13:17:57 | HANDS  | T39 try 1: src/game.js reset on R: car back to spawn, zero velocity, repair damage, reset event (toast RESET — REPAIRED) + tests
+2026-10-20 13:20:50 | ORCH   | T39: PASSED (hands)
+2026-10-20 13:20:52 | HANDS  | T40 try 1: src/main.js wire M3: traffic/ped/fx views, minimap, damage HUD, smoke from hood when smoking, events -> thud/horn/squeal audio and toasts + test that a scripted wall hit emits impact, sparks and damage
+2026-10-20 13:28:39 | ORCH   | hands: new memory note reference_browser_check_cmd.md - hybrid browser_check.py — when using --cmd, the positional target must be the server URL, not the project folder
+2026-10-20 13:29:15 | ORCH   | T40: PASSED (hands)
+2026-10-20 13:29:15 | ORCH   | M3: screenshots for the visual review
+2026-10-20 13:29:17 | BRAIN  | M3: visual review with local Strata (1 screenshots)
+2026-10-20 13:32:12 | BRAIN  | M3: visual review done - 6 fix task(s) added
+2026-10-20 13:32:19 | BRAIN  | M3: review with sonnet in the background - hands keep building
+2026-10-20 13:32:21 | HANDS  | T69 try 1: src/ui/startScreen.js + src/hud/hud.js: `R` reset shipped in T39 but is advertised nowhere. T62 removed the keycap and the hint segment while KeyR did nothing; it does something now and neither came back, so the only place R appears is the overheat toast — after the car is already broken. Re-add `<kbd>R</kbd> reset &amp; repair` to the keycap grid and a `<b>R</b> reset` segment to the hint strip. The new test reads both files: startScreen contains a `<kbd>R</kbd>` keycap and hud's hint markup contains `<b>R</b>`
+2026-10-20 13:34:10 | ORCH   | T69: PASSED (hands)
+2026-10-20 13:34:12 | HANDS  | T70 try 1: src/ui/startScreen.js: the attract orbit hides the car the player will drive. ORBIT_R 90 / ORBIT_H 55 is ~105 m away and looks at the spawn, which lands at exact frame centre under the h1/h2 — the car is a few pixels there, and the traffic and pedestrians main.js already steps behind the scrim are too small to notice, so the first screen shows no car and no town life. Drop ORBIT_H to ~26 and ORBIT_R to ~62, keeping ORBIT_W and the circular shape. The new test imports attractPose and asserts y <= 32 and horizontal distance from the centre <= 70 at t = 0
+2026-10-20 13:36:41 | ORCH   | T70: PASSED (hands)
+2026-10-20 13:36:41 | BRAIN  | M3: review merged - 3 fix task(s) added
+2026-10-20 13:36:55 | HANDS  | T71 try 1: src/style.css: the footer reads as a rendering artifact. `#start .foot` is #6d87a8 at 12 px with no text-shadow, sitting on the darkest band of the scrim (rgba(7,12,21,0.85)), so the one line that sells the fixed seed is barely visible; `#start h2` has the same missing shadow over a busy facade. Lighten .foot to ~#a8c4e4 and give both rules a text-shadow like h1 and #go. The new test reads src/style.css and asserts the `#start .foot` rule declares text-shadow and a hex colour lighter than #9ab4d0, and that the `#start h2` rule declares text-shadow
+2026-10-20 13:38:08 | ORCH   | hands: changed memory note reference_browser_check_cmd.md - hybrid browser_check.py — when using --cmd, the positional target must be the server URL, not the project folder
+2026-10-20 13:38:16 | ORCH   | T71: PASSED (hands)
+2026-10-20 13:38:18 | HANDS  | T72 try 1: src/style.css: the control legend zig-zags. `.keys { grid-template-columns: auto auto }` flows the 5 rows row-major, so the eye reads "accelerate / brake-reverse", jumps a column for "steer", drops back for "handbrake" and lands on a ragged empty cell — throttle and steer, one action pair, split across columns. Make the desktop layout a single column (the 480 px media query already collapses to 1fr, so this only removes the two-column case). The new test reads src/style.css and asserts the base `.keys` rule uses `grid-template-columns: 1fr`
+2026-10-20 13:39:37 | ORCH   | T72: PASSED (hands)
+2026-10-20 13:39:39 | HANDS  | T73 try 1: Polish: the TOWN DRIVE wordmark is dead flat once the entrance animation ends — the h1 gradient in src/style.css never moves, so the title sits still behind a pulsing pill. Add background-size: 200% and a slow (6-8 s) background-position drift keyframe on `#start h1` so the title breathes. The new test reads src/style.css and asserts the `#start h1` rule declares an animation and the file has a @keyframes block animating background-position
+2026-10-20 13:43:38 | ORCH   | T73: PASSED (hands)
+2026-10-20 13:43:40 | HANDS  | T74 try 1: Polish: the menu is inert until the click. In src/ui/startScreen.js, add keydown/keyup listeners that run while the overlay is up and toggle a `lit` class on the matching `<kbd>` (amber fill, as if pressed), so pressing W or SPACE on the start screen lights its keycap — the screen teaches the controls by answering them instead of by being read. Keys must not start the game; only the click does. The new test reads src/ui/startScreen.js and asserts it registers a keydown listener and toggles a class on kbd elements
+2026-10-20 13:45:48 | ORCH   | hands: new memory note reference_browser_check_hold_limit.md - hybrid browser_check.py releases a held key before screenshotting, so transient/held visual states can't be captured
+2026-10-20 13:45:56 | ORCH   | T74: PASSED (hands)
+2026-10-20 13:45:58 | HANDS  | T75 try 1: Bug (review): src/peds.js ASSUMPTION "a walker never leaves its sidewalk band ... can never put it in the road" is wrong along the walking axis. The final clamp covers only `across`; the clipped-by-car shove adds up to (car.radius + PED_R) = 2.5 m to `along` after the [lo, hi] bounce, so a walker at the end of its edge with the car 0.5 m behind it lands ~0.6 m past the block end, in the road/crossing (repro: ped.x = ped.hi, car at hi - 0.5, speed 10, one stepPeds gives x = hi + 2). Clamp `along` to [lo, hi] as well, in the same last-word step as `across`. Add the new test tests/peds-bounds.test.js (makePeds on generateTown(), put an x-axis walker at hi with a fast car just behind it, assert after stepPeds that its x is within [lo, hi]; same for a z-axis walker)
+2026-10-20 13:47:23 | ORCH   | T75: PASSED (hands)
+2026-10-20 13:47:25 | HANDS  | T76 try 1: Bug (review): tests/start-motion.test.js encodes the pre-T59 start-screen CSS and now fails (2 tests: 'runs the fade-up on the start screen children, the pill included' wants the `animation:` shorthand on `#start > *:not(#go)` and fadeUp on `#go`; "keeps the pill's pulse from starting before its slide ends" wants a two-value animation-delay on the pill). T59 deliberately moved the children to longhands (the shorthand's 0s delay beat the nth-child delays) and dropped fadeUp from #go (fill both hid the CTA), so the CSS is right and that test file encodes the wrong behaviour and may be edited: assert animation-name fadeUp and animation-fill-mode both on `#start > *:not(#go)` via the longhands, that `#go` declares pulse and no fadeUp, and replace the pulse-delay test with one asserting the nth-child delays stay strictly increasing. Do not touch src/style.css
+2026-10-20 13:48:43 | ORCH   | T76: PASSED (hands)
+2026-10-20 13:48:45 | HANDS  | T77 try 1: Bug (review): the town is frozen behind the start screen. src/main.js only calls stepGame when `running`, so traffic and pedestrians never move in attract mode, the opposite of the alive town M3 sells (and T70's text wrongly assumes main.js already steps them). Add `stepAmbient(world, dt)` to src/game.js (clamps dt like stepGame, calls stepTraffic(world.traffic, null, step) and stepPeds on the parked car, pushes no events, never moves world.car) and call it from the attract branch of src/main.js. Add the new test tests/ambient.test.js (createGame, stepAmbient 2 s: some traffic car x/z changed, some ped phase changed, car x/z/speed unchanged, world.events empty)
+2026-10-20 13:50:26 | ORCH   | T77: PASSED (hands)
+2026-10-20 13:50:28 | HANDS  | T41 try 1: src/input.js pointer-lock toggle on P (mouse look without holding the button), falls back to drag; pure state toggle + tests
+2026-10-20 13:52:36 | ORCH   | T41: PASSED (hands)
+2026-10-20 13:52:39 | HANDS  | T42 try 1: Delight: src/camera.js occlusion pull-in - segment car->camera vs building AABBs, place camera just before the first hit (smoothed, never closer than minDist*0.5) + tests
+2026-10-20 13:57:44 | ORCH   | T42: PASSED (hands)
+2026-10-20 13:57:46 | HANDS  | T43 try 1: Delight: stuck rescue in src/game.js - throttle held + speed < 0.5 for 2.5 s emits stuck event (toast "Stuck? Press R"); R respawns at nearest road centre facing along it, with fade-out/in overlay state + tests
+2026-10-20 14:04:39 | ORCH   | T43: PASSED (hands)
+2026-10-20 14:04:42 | HANDS  | T44 try 1: Delight: cinematic start - src/camera.js swoopPose(t) eased 1.2 s from attract pose to chase pose, start overlay fades, audio ignition crank before idle, GO! toast + tests (t=0 attract, t=1 chase, monotonic easing)
+2026-10-20 14:11:24 | ORCH   | T44: PASSED (hands)
+2026-10-20 14:11:27 | HANDS  | T45 try 1: Delight: body lean - pure spring-damper in src/car.js giving chassis pitch from longitudinal accel and roll from lateral accel, applied to body/cabin in carMesh + tests (pitches back on throttle, settles to 0)
+2026-10-20 14:15:46 | ORCH   | T45: PASSED (hands)
+2026-10-20 14:15:49 | HANDS  | T46 try 1: Delight: pause - Esc or window blur sets paused (sim frozen, audio suspended, dim PAUSED — click to resume overlay), resume resets frame clock so no dt jump + tests
+2026-10-20 14:21:03 | ORCH   | T46: PASSED (hands)
+2026-10-20 14:21:06 | HANDS  | T47 try 1: Delight: horn reactions - peds within 12 m flinch and step away, nearest traffic car ahead within 15 m honks back (lower pitch horn event, 2 s cooldown) + tests
+2026-10-20 14:27:22 | ORCH   | hands: new memory note reference_browser_check_vite.md - browser_check.py --cmd \"npm run dev\" times out on this Vite project; start Vite yourself and pass http://localhost:PORT/index.html
+2026-10-20 14:27:55 | ORCH   | T47: PASSED (hands)
+2026-10-20 14:27:58 | HANDS  | T48 try 1: Delight: HUD polish - speed number tweens, session TOP speed badge, hint strip fades after 10 s and returns on F1 + tests of the pure state
+2026-10-20 14:32:30 | ORCH   | T48: PASSED (hands)
+2026-10-20 14:32:33 | HANDS  | T49 try 1: tests/acceptance.test.js: headless run of brief acceptance 3-6 (0->max 3-4 s, brake->reverse slower, no pivot + A/D mirror, wall stop/never inside/outside bounds, same-seed town identical) plus production build
+2026-10-20 14:37:06 | ORCH   | T49: PASSED (hands)
+2026-10-20 14:37:06 | ORCH   | M4: screenshots for the visual review
+2026-10-20 14:37:09 | BRAIN  | M4: visual review with local Strata (1 screenshots)
+2026-10-20 14:39:42 | BRAIN  | M4: visual review done - 4 fix task(s) added
+2026-10-20 14:39:52 | BRAIN  | M4: review with sonnet in the background - hands keep building
+2026-10-20 14:39:55 | HANDS  | T78 try 1: src/ui/startScreen.js attractPose: the look target is {x, y:0, z} — the attract camera aims exactly at the parked car, so it lands at dead screen centre, behind the keycap legend and the CLICK TO DRIVE pill (the M4 shot shows only a dark road where the hero car should be). Raise the look target (lookAt.y ~8-12) so the car renders in the lower third, below the pill, against the lit road; keep the circular orbit and the centre x/z.
+2026-10-20 14:53:20 | ORCH   | hands: new memory note reference_browser_check_cwd.md - browser_check.py writes its screenshot relative to the shell's cwd, and vitest resolves test paths from cwd too — run both from the repo root.
+2026-10-20 14:53:44 | ORCH   | T78: PASSED (hands)
+2026-10-20 14:53:44 | BRAIN  | M4: review merged - 5 fix task(s) added
+2026-10-20 14:53:51 | HANDS  | T79 try 1: src/style.css: every other start-screen text (h1, h2, .foot, #go) carries a text-shadow but .keys has none, so the plain labels "accelerate / brake-reverse" and "orbit camera" wash out where they cross a lit building facade behind the scrim. Add a text-shadow to the .keys rule (e.g. 0 1px 6px rgba(0,0,0,0.85)).
+2026-10-20 14:55:07 | ORCH   | T79: PASSED (hands)
+2026-10-20 14:55:10 | HANDS  | T80 try 1: Polish: the parked hero car is a dark silhouette in the dusk attract shot. Light its own lamps while the start screen is up — tail lights emissive and a faint warm headlight pool on the road — so the car reads as "yours, ready to go" and the town feels inhabited; enable them in the attract branch of src/main.js (or a carMesh lamp setter called there).
+2026-10-20 14:59:55 | ORCH   | hands: new memory note reference_attract_screenshot.md - town-driving-game-v3 attract screen: the hero car renders behind the keycap legend / CLICK TO DRIVE pill, so crop the browser_check screenshot to judge car-level detail
+2026-10-20 15:00:34 | ORCH   | T80: PASSED (hands)
+2026-10-20 15:00:37 | HANDS  | T81 try 1: Polish: the start overlay is flat — only the pill reacts to the cursor. Add a subtle mouse-parallax: on pointermove over #start, translate the title/legend a few pixels opposite the pointer (eased) so the menu has depth and feels crafted before the click; keys must still not start the game.
+2026-10-20 15:04:08 | ORCH   | hands: changed memory note reference_browser_check_vite.md - browser_check.py --cmd \"npm run dev\" times out on this Vite project; start Vite yourself and pass http://localhost:PORT/index.html
+2026-10-20 15:04:16 | ORCH   | T81: PASSED (hands)
+2026-10-20 15:04:20 | HANDS  | T82 try 1: Bug (review): the cinematic start flies the camera to NaN. src/main.js passes `aim = { x, y, z }` (no heading) as the `target` of swoopPose, but aimPose reads target.heading, so for the whole 1.2 s swoop camera.position.x/z and lookAt are NaN (verified: swoopPose(0.5, ...) returns x: NaN, z: NaN) and the start click lands on a blank view; tests/transition.test.js only passes headed targets and main.js is source-text tested. Add exported pure `chaseTarget(world)` to src/camera.js returning { x: car.x, y: CONFIG.cam.height, z: car.z, heading: car.heading } and use it in src/main.js for both the swoop target and the lookAt aim. The new test tests/swoop-target.test.js imports chaseTarget, builds createGame(), steps one frame with zero controls, and asserts swoopPose(t, attractPose(0, spawn), world.cam, chaseTarget(world), world.town.buildings) has finite x, y, z and lookAt at t = 0, 0.5 and 1 (hands)
+2026-10-20 15:07:27 | ORCH   | T82: PASSED (hands)
+2026-10-20 15:07:30 | HANDS  | T83 try 1: Bug (review): T70 dropped the attract orbit to ORBIT_H 26 but the camera now sits inside downtown towers (up to 42 m): of 320 samples around the full orbit about the spawn, 22 (~7 %, roughly 5 s of every 78 s lap) fall inside a building taller than 26 m, so the start screen periodically shows the inside of a wall. tests/main-town.test.js 'circles that middle at a fixed radius and height' already fails on its `p.y > 43` bound, which encodes the pre-T70 height; that test file may be edited: drop the y > 43 assertion and keep the fixed radius/height and lookAt checks. In src/ui/startScreen.js choose ORBIT_R / ORBIT_H (or a per-angle radius) so the camera is never inside a building footprint at its height. The new test tests/attract-clear.test.js uses generateTown(CONFIG.seed, CONFIG), centre = town.spawn, samples attractPose over t = 0..80 s in 0.25 s steps and asserts no sample is inside any building (x/z within [b.x, b.x + b.w] x [b.z, b.z + b.d] and p.y < b.height + 1) (hands)
+2026-10-20 15:13:26 | ORCH   | T83: PASSED (hands)
+2026-10-20 15:13:29 | HANDS  | T84 try 1: Bug (review): tests/reset.test.js is red (6 tests: puts the car back at the spawn, repairs the damage, emits one reset event per press, resets before the collision pass, drives off from the spawn, RESET — REPAIRED toast). It encodes the pre-T43 instant reset to town.spawn; T43 deliberately made R fade to black (0.2 s) and respawn at the nearest road centre facing along it, so the code is right and that test file may be edited. Rewrite it for the new behaviour: after pressing R, step until world.fade reaches 1 (cap 2 s), then assert position equals the nearest road centre line with heading 0/PI or +-PI/2, zero velocity, repaired damage, exactly one `reset` event per press (held R is still one), and the RESET — REPAIRED toast from eventsToHud on the frame that event appears. Keep the hold-through-reset and buried-car assertions with the new timing. No src change (hands)
+2026-10-20 15:16:22 | ORCH   | T84: PASSED (hands)
+2026-10-20 15:16:25 | HANDS  | T85 try 1: Bug (review): tests/honest-copy.test.js is red (2 tests: 'start screen has no R keycap', 'hint strip has no R reset segment'). They guard the T62 M2 removal; T69 deliberately re-added both because R reset now works, so the UI is right and that test file may be edited: replace those two tests with ones asserting src/ui/startScreen.js contains `<kbd>R</kbd>` and src/hud/hud.js contains `<b>R</b> reset`, keep the traffic/pedestrians-claim and 'same town every run' tests. No src change (hands)
+2026-10-20 15:17:21 | ORCH   | T85: PASSED (hands)
+2026-10-20 15:17:24 | HANDS  | T86 try 1: Bug (review): tests/hud-events.test.js 'builds a damage bar whose fill width tracks setDamage' fails with "Cannot read properties of undefined (reading 'map')". T48 added `topEl.append('TOP ', topNumEl)` in createHud, a raw string child; the test's fake DOM walks `.children` and a string has none (real browsers are fine, but createHud must stay buildable on the fake doc every HUD test uses). Do not edit the test: in src/hud/hud.js build the label as an element (`const topLbl = doc.createElement('span'); topLbl.textContent = 'TOP ';`) and `topEl.append(topLbl, topNumEl)`, keeping the #topNum text-update behaviour tests/hud-polish.test.js relies on (hands)
+2026-10-20 15:18:09 | ORCH   | T86: PASSED (hands)
+2026-10-20 15:18:09 | ORCH   | done: {"tasks": 37, "first_try": 37, "local_retries": 0, "rescues": 0, "failed": [], "reviews": 2, "minutes": 130.2, "brain_calls": 2, "brain": "cloud"}
