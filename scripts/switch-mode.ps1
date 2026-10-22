@@ -28,6 +28,7 @@ $ComfyExe        = "$env:LOCALAPPDATA\Programs\ComfyUI\ComfyUI.exe"
 $ComfyBase       = "$HOME\Documents\ComfyUI"
 
 $LoadTimeoutS    = 600
+$GatewayRestartS = 60                    # longest wait for `openclaw gateway restart` after a model change
 # -----------------------------------------------------------------------------
 $ErrorActionPreference = "Continue"
 
@@ -99,8 +100,15 @@ function Ensure-UnslothProvider {
     openclaw config set models.providers.unsloth --strict-json $json | Out-Null
 }
 function Set-OpenClawModel($ref) {
+    # Only on a real change. Every MERGEN start used to set the same model and restart the gateway, and
+    # `openclaw gateway restart` can hang for minutes on Windows (2026-10-22: 3 of a ~5 min start).
+    $current = (openclaw config get agents.defaults.model.primary 2>$null) -replace '"', ''
+    if ($current -eq $ref) { Write-Host "OpenClaw already uses $ref"; return }
     openclaw models set $ref | Out-Null
-    openclaw gateway restart | Out-Null
+    $restart = Start-Process -FilePath "cmd.exe" -ArgumentList "/c", "openclaw gateway restart" -WindowStyle Hidden -PassThru
+    if (-not $restart.WaitForExit($GatewayRestartS * 1000)) {
+        Write-Warning "gateway restart still running after $GatewayRestartS s - not waiting for it (check: openclaw gateway status)"
+    }
     Write-Host "OpenClaw default model: $ref"
 }
 
