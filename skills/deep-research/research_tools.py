@@ -164,7 +164,7 @@ def cmd_start(a) -> int:
             d = searx(q)
         except Exception as e:  # noqa: BLE001
             print(f"SEARCH DOWN: SearXNG did not answer ({e}). Start it: "
-                  r"C:\Users\PC\Documents\GitHub\local-agent-stack\scripts\start-searxng.ps1")
+                  r"{{MERGEN_HOME}}\scripts\start-searxng.ps1")
             return 2
         engines |= {e for r in d["results"] for e in r.get("engines", [])}
         dead.update({e: why for e, why in d.get("unresponsive_engines", [])})

@@ -97,7 +97,7 @@ function Render-Template([string]$Source, [string]$Target) {
 }
 Get-ChildItem "$repo\skills" -Recurse -File | ForEach-Object {
     $target = Join-Path "$HOME\.agents\skills" $_.FullName.Substring("$repo\skills\".Length)
-    if ($_.Extension -in ".md", ".ps1") { Render-Template $_.FullName $target } else { Copy-Item $_.FullName $target -Force }
+    if ($_.Extension -in ".md", ".ps1", ".py") { Render-Template $_.FullName $target } else { Copy-Item $_.FullName $target -Force }
 }
 # MERGEN's identity files: only written when missing, so an existing workspace is never overwritten.
 foreach ($f in "IDENTITY.md", "SOUL.md", "AGENTS.md") {
